@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>德光長老教會 歷期週報</title>
+  <meta name="description" content="德光長老教會主日禮拜週報歷期彙整，點擊卡片即可閱讀每一期週報。">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="bg-gradient bg-gradient-1"></div>
+  <div class="bg-gradient bg-gradient-2"></div>
+
+  <div class="page-container">
+    <!-- Header -->
+    <header class="page-header">
+      <div class="church-logo">✝</div>
+      <h1>德光長老教會</h1>
+      <p class="church-subtitle">歷期主日禮拜週報</p>
+    </header>
+
+    <!-- Loading State -->
+    <div id="loading-state" class="loading-state">
+      <div class="spinner"></div>
+      <p>載入週報目錄中...</p>
+    </div>
+
+    <!-- Error State -->
+    <div id="error-state" class="error-state" style="display:none;">
+      <div class="error-icon">⚠️</div>
+      <h3>尚無週報資料</h3>
+      <p>目錄尚未建立，請先至主系統上傳第一份週報。</p>
+    </div>
+
+    <!-- Bulletin Grid -->
+    <div id="bulletin-grid" class="bulletin-grid" style="display:none;"></div>
+
+    <footer class="page-footer">
+      <p>© 2026 德光長老教會 · 週報 AI 智慧轉換系統</p>
+      <a href="https://linwilly.github.io/tkch-week-news/" target="_blank" class="upload-link">
+        🔒 幹事專區 (登入上傳新週報)
+      </a>
+    </footer>
+  </div>
+
+  <script>
+    const GITHUB_USERNAME = 'wowidance-cloud';
+    const INDEX_FILENAME = 'tkch-bulletin-index.json';
+    const INDEX_DESCRIPTION = 'TKCH-BULLETIN-INDEX';
+
+    async function loadBulletins() {
+      const loadingEl = document.getElementById('loading-state');
+      const errorEl = document.getElementById('error-state');
+      const gridEl = document.getElementById('bulletin-grid');
+
+      try {
+        // Fetch all public gists for the user (no auth needed for public gists)
+        const res = await fetch(`https://api.github.com/users/${GITHUB_USERNAME}/gists?per_page=100`);
+        if (!res.ok) throw new Error('無法連接 GitHub API');
+        const gists = await res.json();
+
+        // Find the index gist
+        const indexGist = gists.find(g => g.description === INDEX_DESCRIPTION);
+        if (!indexGist) {
+          loadingEl.style.display = 'none';
+          errorEl.style.display = 'flex';
+          return;
+        }
+
+        // Fetch index gist content
+        const detailRes = await fetch(`https://api.github.com/gists/${indexGist.id}`);
+        const detail = await detailRes.json();
+        const rawContent = detail.files[INDEX_FILENAME]?.content;
+        if (!rawContent) throw new Error('目錄資料為空');
+
+        const bulletins = JSON.parse(rawContent);
+        if (!bulletins || bulletins.length === 0) {
+          loadingEl.style.display = 'none';
+          errorEl.style.display = 'flex';
+          return;
+        }
+
+        // Render cards
+        loadingEl.style.display = 'none';
+        gridEl.style.display = 'grid';
+        renderCards(bulletins, gridEl);
+
+      } catch (err) {
+        console.error(err);
+        loadingEl.style.display = 'none';
+        errorEl.style.display = 'flex';
+      }
+    }
+
+    function renderCards(bulletins, container) {
+      bulletins.forEach((bulletin, index) => {
+        const isLatest = index === 0;
+        const card = document.createElement('a');
+        card.href = bulletin.url;
+        card.target = '_blank';
+        card.rel = 'noopener noreferrer';
+        card.className = 'bulletin-card' + (isLatest ? ' latest' : '');
+
+        const dateObj = new Date(bulletin.publishedAt || bulletin.date);
+        const formattedDate = dateObj.toLocaleDateString('zh-TW', {
+          year: 'numeric', month: 'long', day: 'numeric', weekday: 'long'
+        });
+
+        card.innerHTML = `
+          ${isLatest ? '<div class="latest-badge">✨ 本週週報</div>' : ''}
+          <div class="card-volume">第 ${bulletin.volume} 卷・第 ${bulletin.issue} 期</div>
+          <div class="card-title">${bulletin.title}</div>
+          <div class="card-date">${formattedDate}</div>
+          <div class="card-arrow">閱讀週報 →</div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    loadBulletins();
+  </script>
+</body>
+</html>
