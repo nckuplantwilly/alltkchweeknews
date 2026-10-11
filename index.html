@@ -22,6 +22,14 @@
       <p class="church-subtitle">歷期主日禮拜週報</p>
     </header>
 
+    <!-- Accessibility Bar -->
+    <div class="accessibility-bar" role="toolbar" aria-label="無障礙工具列">
+      <span class="a11y-label">字體大小：</span>
+      <button type="button" class="font-btn" id="font-decrease" aria-label="縮小字體" onclick="adjustFont(-0.1)">A-</button>
+      <button type="button" class="font-btn active" id="font-reset" aria-label="重設字體" onclick="adjustFont(0)">A</button>
+      <button type="button" class="font-btn" id="font-increase" aria-label="放大字體" onclick="adjustFont(0.1)">A+</button>
+    </div>
+
     <!-- Loading State -->
     <div id="loading-state" class="loading-state">
       <div class="spinner"></div>
@@ -50,7 +58,179 @@
     const GITHUB_USERNAME = 'wowidance-cloud';
     const INDEX_FILENAME = 'tkch-bulletin-index.json';
     const INDEX_DESCRIPTION = 'TKCH-BULLETIN-INDEX';
+    const FONT_STORAGE_KEY = 'tkch-font-scale';
 
+    /* ==========================================================================
+       功能一：字體放大/縮小
+       ========================================================================== */
+    let currentFontScale = 1.0;
+
+    function loadFontScale() {
+      try {
+        const saved = localStorage.getItem(FONT_STORAGE_KEY);
+        if (saved !== null) {
+          const val = parseFloat(saved);
+          if (!isNaN(val) && val >= 0.85 && val <= 1.5) {
+            currentFontScale = Math.round(val * 100) / 100;
+          }
+        }
+      } catch (e) {
+        console.warn('localStorage is unavailable', e);
+      }
+      applyFontScale();
+    }
+
+    function adjustFont(delta) {
+      if (delta === 0) {
+        currentFontScale = 1.0;
+      } else {
+        let next = Math.round((currentFontScale + delta) * 10) / 10;
+        if (next < 0.85) next = 0.85;
+        if (next > 1.5) next = 1.5;
+        currentFontScale = next;
+      }
+      try {
+        localStorage.setItem(FONT_STORAGE_KEY, currentFontScale.toString());
+      } catch (e) {
+        console.warn('Cannot save to localStorage', e);
+      }
+      applyFontScale();
+    }
+
+    function applyFontScale() {
+      document.documentElement.style.setProperty('--font-scale', currentFontScale);
+      const resetBtn = document.getElementById('font-reset');
+      if (resetBtn) {
+        if (Math.abs(currentFontScale - 1.0) < 0.01) {
+          resetBtn.classList.add('active');
+        } else {
+          resetBtn.classList.remove('active');
+        }
+      }
+      const decBtn = document.getElementById('font-decrease');
+      if (decBtn) {
+        decBtn.disabled = currentFontScale <= 0.85;
+      }
+      const incBtn = document.getElementById('font-increase');
+      if (incBtn) {
+        incBtn.disabled = currentFontScale >= 1.5;
+      }
+    }
+
+    /* ==========================================================================
+       功能二：語音朗讀 TTS (Web Speech API)
+       ========================================================================== */
+    let currentTTS = {
+      index: null,
+      btn: null,
+      utterance: null,
+      isPaused: false
+    };
+
+    function isSpeechSupported() {
+      return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+    }
+
+    function setBtnPlayingUI(btn) {
+      if (!btn) return;
+      btn.classList.add('playing');
+      btn.setAttribute('aria-label', '暫停語音朗讀');
+      btn.setAttribute('title', '暫停');
+      const icon = btn.querySelector('.tts-icon');
+      if (icon) icon.textContent = '⏸';
+    }
+
+    function setBtnPausedUI(btn) {
+      if (!btn) return;
+      btn.classList.remove('playing');
+      btn.setAttribute('aria-label', '繼續語音朗讀');
+      btn.setAttribute('title', '繼續');
+      const icon = btn.querySelector('.tts-icon');
+      if (icon) icon.textContent = '🔊';
+    }
+
+    function setBtnStoppedUI(btn) {
+      if (!btn) return;
+      btn.classList.remove('playing');
+      btn.setAttribute('aria-label', '語音朗讀週報內容');
+      btn.setAttribute('title', '語音朗讀');
+      const icon = btn.querySelector('.tts-icon');
+      if (icon) icon.textContent = '🔊';
+    }
+
+    function stopCurrentTTS() {
+      if (isSpeechSupported()) {
+        window.speechSynthesis.cancel();
+      }
+      if (currentTTS.btn) {
+        setBtnStoppedUI(currentTTS.btn);
+      }
+      currentTTS = {
+        index: null,
+        btn: null,
+        utterance: null,
+        isPaused: false
+      };
+    }
+
+    function handleTTSClick(bulletin, formattedDate, btn, index) {
+      if (!isSpeechSupported()) return;
+
+      const synth = window.speechSynthesis;
+
+      // 點擊同一張卡片的 🔊
+      if (currentTTS.index === index) {
+        if (synth.speaking) {
+          if (synth.paused || currentTTS.isPaused) {
+            // 目前暫停中 -> 再點繼續
+            synth.resume();
+            currentTTS.isPaused = false;
+            setBtnPlayingUI(btn);
+          } else {
+            // 目前播放中 -> 暫停
+            synth.pause();
+            currentTTS.isPaused = true;
+            setBtnPausedUI(btn);
+          }
+          return;
+        }
+      }
+
+      // 點擊不同卡片的 🔊：停止前一個，播放新的
+      stopCurrentTTS();
+
+      const summaryText = bulletin.summary ? `${bulletin.summary}` : '';
+      const speechText = `第${bulletin.volume}卷第${bulletin.issue}期，${formattedDate}，${bulletin.title}。${summaryText}`;
+
+      const utterance = new SpeechSynthesisUtterance(speechText);
+      utterance.lang = 'zh-TW';
+      utterance.rate = 0.85; // 稍慢，適合長者
+      utterance.pitch = 1.0;
+
+      currentTTS.index = index;
+      currentTTS.btn = btn;
+      currentTTS.utterance = utterance;
+      currentTTS.isPaused = false;
+
+      utterance.onstart = () => {
+        setBtnPlayingUI(btn);
+      };
+
+      utterance.onend = () => {
+        stopCurrentTTS();
+      };
+
+      utterance.onerror = (err) => {
+        console.error('語音朗讀錯誤:', err);
+        stopCurrentTTS();
+      };
+
+      synth.speak(utterance);
+    }
+
+    /* ==========================================================================
+       週報資料載入與卡片渲染
+       ========================================================================== */
     async function loadBulletins() {
       const loadingEl = document.getElementById('loading-state');
       const errorEl = document.getElementById('error-state');
@@ -99,12 +279,14 @@
     }
 
     function renderCards(bulletins, container) {
+      const speechSupported = isSpeechSupported();
+      if (!speechSupported) {
+        document.body.classList.add('no-speech-synth');
+      }
+
       bulletins.forEach((bulletin, index) => {
         const isLatest = index === 0;
-        const card = document.createElement('a');
-        card.href = bulletin.url;
-        card.target = '_blank';
-        card.rel = 'noopener noreferrer';
+        const card = document.createElement('div');
         card.className = 'bulletin-card' + (isLatest ? ' latest' : '');
 
         const rawDate = bulletin.date || bulletin.publishedAt;
@@ -124,16 +306,40 @@
         }
 
         card.innerHTML = `
-          ${isLatest ? '<div class="latest-badge">✨ 本週週報</div>' : ''}
-          <div class="card-volume">第 ${bulletin.volume} 卷・第 ${bulletin.issue} 期</div>
-          <div class="card-title">${bulletin.title}</div>
-          <div class="card-date">${formattedDate}</div>
-          <div class="card-arrow">閱讀週報 →</div>
+          <a href="${bulletin.url}" target="_blank" rel="noopener noreferrer" class="card-link" aria-label="閱讀 第${bulletin.volume}卷 第${bulletin.issue}期 週報：${bulletin.title}">
+            ${isLatest ? '<div class="latest-badge">✨ 本週週報</div>' : ''}
+            <div class="card-volume">第 ${bulletin.volume} 卷・第 ${bulletin.issue} 期</div>
+            <div class="card-title">${bulletin.title}</div>
+            <div class="card-date">${formattedDate}</div>
+            <div class="card-arrow">閱讀週報 →</div>
+          </a>
+          <button type="button" class="tts-btn" aria-label="語音朗讀週報內容" title="語音朗讀" ${!speechSupported ? 'style="display:none;"' : ''}>
+            <span class="tts-icon" aria-hidden="true">🔊</span>
+          </button>
         `;
+
+        if (speechSupported) {
+          const ttsBtn = card.querySelector('.tts-btn');
+          if (ttsBtn) {
+            ttsBtn.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleTTSClick(bulletin, formattedDate, ttsBtn, index);
+            });
+          }
+        }
+
         container.appendChild(card);
       });
     }
 
+    // 頁面卸載時停止 TTS 播放
+    window.addEventListener('beforeunload', () => {
+      stopCurrentTTS();
+    });
+
+    // 啟動字體設定與目錄載入
+    loadFontScale();
     loadBulletins();
   </script>
 </body>
