@@ -1,0 +1,1167 @@
+/**
+ * ============================================================
+ * 德光長老教會 週報自動化處理系統 (v3.0 超連結／錯字修正版)
+ * Google Apps Script
+ *
+ * v3 針對兩個實際故障：
+ *  1. 抽不到原始 PDF 超連結
+ *     - 舊版呼叫了不存在的 decodePercentEncoding()，整段抽取被 catch 吃掉後回傳空陣列
+ *     - 連結規範被包在「有抽到網址才注入」的 if 裡，抽取失敗時連已知活動按鈕規則也一起消失
+ *     - Gemini 常把網址寫成 https://forms.gle/... 省略號
+ *  2. 錯字（教界消息→業界消息、簡體字、侍奉／事奉 等）
+ *     - 只靠 prompt 不夠，v3 在 HTML 產出後再跑一次用語校正
+ *
+ * 請先執行 setupApiKeys()（填入您自己的金鑰，不要使用任何已外洩的 token）
+ * 再執行 testGeminiConnection()、diagnoseLatestPdf()
+ * 確認無誤後執行 reprocessLatestBulletin() 或 checkAndProcessNewBulletins()
+ * ============================================================
+ */
+
+const DEACON_FOLDER_ID   = '174Z7NcewqIu6tFQl2h_LbFZVdhtqrKcX';
+const PERSONAL_FOLDER_ID = '1SdFohepZisOeqDCa-orOxWlb1XvbqWuN';
+const GITHUB_USERNAME    = 'wowidance-cloud';
+const INDEX_FILENAME     = 'tkch-bulletin-index.json';
+const INDEX_DESCRIPTION  = 'TKCH-BULLETIN-INDEX';
+const PROCESSED_KEY      = 'PROCESSED_FILE_IDS';
+const BATCH_LIMIT        = 5;
+
+const GEMINI_MODELS = [
+  'gemini-flash-latest',
+  'gemini-flash-lite-latest',
+  'gemini-pro-latest'
+];
+
+/**
+ * 常設活動按鈕：prompt 與 HTML 後處理共用同一份，避免兩邊不一致。
+ * keys 為週報內文關鍵字；只要內文出現，就必須放入對應按鈕。
+ */
+const KNOWN_ACTIVITY_BUTTONS = [
+  {
+    keys: ['慕道班'],
+    match: 'FAIpQLScx-vbYcoA2Eq0ICfe5Jxa78AU8TKpwAOUSVcpURoiumN5E_w',
+    href: 'https://docs.google.com/forms/d/e/1FAIpQLScx-vbYcoA2Eq0ICfe5Jxa78AU8TKpwAOUSVcpURoiumN5E_w/viewform',
+    label: '慕道班線上報名',
+    isOffering: false
+  },
+  {
+    keys: ['中保代禱', '中保帶禱'],
+    match: 'r30vKE',
+    href: 'https://reurl.cc/r30vKE',
+    label: '中保代禱專頁',
+    isOffering: false
+  },
+  {
+    keys: ['從懷疑到相信', '从怀疑到相信'],
+    match: 'zpQDKe',
+    href: 'https://reurl.cc/zpQDKe',
+    label: '從懷疑到相信',
+    isOffering: false
+  },
+  {
+    keys: ['小步走'],
+    match: 'FAIpQLSc0RclQMdd4rS4pIXpxx40nWqSVddkFADU2VP4GTg6_-MgwEQ',
+    href: 'https://docs.google.com/forms/d/e/1FAIpQLSc0RclQMdd4rS4pIXpxx40nWqSVddkFADU2VP4GTg6_-MgwEQ/viewform',
+    label: '小步走線上報名',
+    isOffering: false
+  },
+  {
+    keys: ['愛相隨', '爱相随'],
+    match: 'FAIpQLSef6aEXbLACST9abmXXsF01CoT8RhKVdoy9cxUZA7dEMGAQLw',
+    href: 'https://docs.google.com/forms/d/e/1FAIpQLSef6aEXbLACST9abmXXsF01CoT8RhKVdoy9cxUZA7dEMGAQLw/viewform',
+    label: '愛相隨小組報名',
+    isOffering: false
+  }
+];
+
+const KNOWN_URL_META = [
+  {
+    match: 'O56r6A',
+    label: '教會停車配置圖',
+    desc: '教會汽機車停車公告與配置圖，若週報有提及停車才放，嚴禁誤放入慕道班！',
+    isOffering: false
+  },
+  {
+    match: 'Egm6bA',
+    label: '線上奉獻',
+    desc: '奉獻相關，依規定嚴格排除，不放入 HTML！',
+    isOffering: true
+  },
+  {
+    match: '100068541559964',
+    label: '德光長老教會官方粉絲頁',
+    desc: '德光長老教會 Facebook 官方粉絲頁，可放於頁尾或教會資訊！',
+    isOffering: false
+  },
+  {
+    match: 'tntklove',
+    label: '德光社區照顧關懷據點粉絲頁',
+    desc: '德光社區照顧關懷據點暨C級巷弄長照站 Facebook 專頁！',
+    isOffering: false
+  }
+];
+
+/** 長詞優先，避免部分替換造成二次錯字 */
+const TYPO_FIXES = [
+  ['業界消息', '教界消息'],
+  ['界界消息', '教界消息'],
+  ['教教消息', '教界消息'],
+  ['教際消息', '教界消息'],
+  ['长考教会', '長老教會'],
+  ['長考教會', '長老教會'],
+  ['長老教曾', '長老教會'],
+  ['長老教惠', '長老教會'],
+  ['長老教回', '長老教會'],
+  ['慕道版', '慕道班'],
+  ['慕道板', '慕道班'],
+  ['侍奉表', '事奉表'],
+  ['事俸表', '事奉表'],
+  ['侍俸表', '事奉表'],
+  ['帶禱事項', '代禱事項'],
+  ['中保帶禱', '中保代禱'],
+  ['掰餅', '擘餅'],
+  ['主日学', '主日學'],
+  ['台南中会', '台南中會'],
+  ['台灣基督长老教会', '台灣基督長老教會'],
+  ['台湾基督长老教会', '台灣基督長老教會'],
+  ['德光长老教会', '德光長老教會'],
+  ['德光長老教会', '德光長老教會'],
+  ['周報', '週報'],
+  ['礼拜', '禮拜'],
+  ['祷告', '禱告'],
+  ['见证', '見證'],
+  ['团契', '團契'],
+  ['圣经', '聖經'],
+  ['诗篇', '詩篇'],
+  ['荣耀', '榮耀'],
+  ['感谢', '感謝'],
+  ['赞美', '讚美'],
+  ['牧师', '牧師'],
+  ['长老', '長老'],
+  ['执事', '執事'],
+  ['圣灵', '聖靈'],
+  ['教会', '教會'],
+  ['台湾', '台灣'],
+  ['学', '學'],
+  ['礼', '禮'],
+  ['祷', '禱'],
+  ['经', '經'],
+  ['诗', '詩'],
+  ['团', '團'],
+  ['证', '證'],
+  ['长', '長'],
+  ['灵', '靈'],
+  ['圣', '聖'],
+  ['会', '會'],
+  ['区', '區'],
+  ['义', '義'],
+  ['听', '聽'],
+  ['读', '讀'],
+  ['讲', '講'],
+  ['爱', '愛'],
+  ['属', '屬'],
+  ['备', '備'],
+  ['处', '處'],
+  ['门', '門'],
+  ['开', '開'],
+  ['关', '關'],
+  ['报', '報'],
+  ['号', '號'],
+  ['页', '頁'],
+  ['书', '書'],
+  ['乐', '樂'],
+  ['齐', '齊'],
+  ['实', '實'],
+  ['从', '從'],
+  ['应', '應'],
+  ['该', '該'],
+  ['还', '還'],
+  ['让', '讓'],
+  ['过', '過'],
+  ['点', '點'],
+  ['钟', '鐘'],
+  ['为', '為'],
+  ['与', '與'],
+  ['这', '這'],
+  ['个', '個'],
+  ['们', '們'],
+  ['来', '來'],
+  ['对', '對'],
+  ['时', '時'],
+  ['间', '間'],
+  ['请', '請'],
+  ['说', '說']
+];
+
+const JUNK_URL_RE = /w3\.org|adobe\.com|purl\.org|color\.org|npes\.org|xml\.org|microsoft\.com|apple\.com\/DTDs|schemas\.openxmlformats|ns\.adobe|xmp\.iid|xmp\.did|pdfa\.org|ci\.org|iptc\.org|plus\.google\.com\/u\/0\/_/i;
+
+// ============================================================
+// ★ 主要排程入口函式
+// ============================================================
+function checkAndProcessNewBulletins() {
+  const props = PropertiesService.getScriptProperties();
+  const GEMINI_API_KEY = props.getProperty('GEMINI_API_KEY');
+  const GITHUB_TOKEN   = props.getProperty('GITHUB_TOKEN');
+  if (!GEMINI_API_KEY || !GITHUB_TOKEN) {
+    Logger.log('❌ 錯誤：請先執行 setupApiKeys() 填入 API 金鑰');
+    return;
+  }
+  Logger.log('=== 德光週報自動化處理開始 (v3.0) ===');
+  Logger.log('🔍 掃描幹事資料夾：' + DEACON_FOLDER_ID);
+  const processedIds = getProcessedIds();
+  Logger.log('📋 已記錄已處理檔案數：' + processedIds.length);
+  let deaconFolder;
+  try {
+    deaconFolder = DriveApp.getFolderById(DEACON_FOLDER_ID);
+  } catch (e) {
+    Logger.log('❌ 無法存取幹事資料夾：' + e.message);
+    return;
+  }
+  const allPdfFiles = getAllPdfFilesRecursive(deaconFolder);
+  Logger.log('📂 找到總計 ' + allPdfFiles.length + ' 份 PDF 檔案');
+  const unhandled = [];
+  for (const f of allPdfFiles) {
+    if (!processedIds.includes(f.getId())) {
+      unhandled.push(f);
+    }
+  }
+  if (unhandled.length === 0) {
+    Logger.log('✅ 所有週報均已處理過，本次結束。');
+    return;
+  }
+  unhandled.sort((a, b) => {
+    const dateA = extractDateFromFilename(a.getName());
+    const dateB = extractDateFromFilename(b.getName());
+    return dateB.localeCompare(dateA);
+  });
+  const toProcess = unhandled.slice(0, BATCH_LIMIT);
+  Logger.log('📄 待處理總數：' + unhandled.length + ' 份，本次優先處理最新 ' + toProcess.length + ' 份');
+  for (const file of toProcess) {
+    Logger.log('\n----------------------------------------');
+    Logger.log('▶ 開始處理：' + file.getName());
+    try {
+      processOneBulletin(file, GEMINI_API_KEY, GITHUB_TOKEN);
+      markAsProcessed(file.getId());
+      Logger.log('✅ 處理成功：' + file.getName());
+    } catch (e) {
+      Logger.log('❌ 處理失敗：' + file.getName() + '\n   原因：' + e.message);
+    }
+    Utilities.sleep(3000);
+  }
+  Logger.log('\n=== 本次執行完畢！===');
+}
+
+function getAllPdfFilesRecursive(folder) {
+  let results = [];
+  const files = folder.getFiles();
+  while (files.hasNext()) {
+    const f = files.next();
+    if (f.getName().toUpperCase().endsWith('.PDF')) {
+      results.push(f);
+    }
+  }
+  const subFolders = folder.getFolders();
+  while (subFolders.hasNext()) {
+    results = results.concat(getAllPdfFilesRecursive(subFolders.next()));
+  }
+  return results;
+}
+
+function processOneBulletin(file, geminiApiKey, githubToken) {
+  Logger.log('  [1/6] 複製備份至個人資料夾...');
+  const personalFolder = DriveApp.getFolderById(PERSONAL_FOLDER_ID);
+  const existing = personalFolder.getFilesByName(file.getName());
+  if (!existing.hasNext()) {
+    file.makeCopy(file.getName(), personalFolder);
+    Logger.log('       ✓ 備份完成');
+  } else {
+    Logger.log('       ⏭ 備份已存在，略過複製');
+  }
+
+  Logger.log('  [2/6] 讀取 PDF 並抽取原始超連結...');
+  const pdfBytes  = file.getBlob().getBytes();
+  const pdfBase64 = Utilities.base64Encode(pdfBytes);
+  Logger.log('       ✓ PDF 大小：' + Math.round(pdfBytes.length / 1024) + ' KB');
+
+  const extractedUrls = extractUrlsFromPdf(file);
+  Logger.log('       ✓ 從 PDF 抽取真實網址數：' + extractedUrls.length + ' 個');
+  if (extractedUrls.length > 0) {
+    Logger.log('         真實連結清單：\n         ' + extractedUrls.join('\n         '));
+  } else {
+    Logger.log('       ⚠ 註解層沒有抽到網址（可能是 QR 圖而不是 PDF 超連結）。將改以關鍵字強制放入常設按鈕。');
+  }
+
+  const fallbackDateStr = extractDateFromFilename(file.getName());
+  Logger.log('  [3/6] 檔名推估日期：' + fallbackDateStr);
+
+  Logger.log('  [4/6] 呼叫 Gemini AI 辨識內文與排版...');
+  const result = callGeminiWithPdf(pdfBase64, fallbackDateStr, geminiApiKey, extractedUrls);
+
+  Logger.log('  [5/6] 後處理：還原真實超連結 + 錯字校正...');
+  const resolvedUrls = resolveUrlsMetadata(extractedUrls);
+  const finalHtml = finalizeBulletinHtml(result.html, resolvedUrls);
+
+  const finalDate = result.date || fallbackDateStr;
+  const volume    = parseInt(result.volume, 10) || 0;
+  const issue     = parseInt(result.issue, 10) || 0;
+  const title     = result.title || ('第 ' + volume + ' 卷第 ' + issue + ' 期');
+  Logger.log('       ✓ 辨識卷期：第 ' + volume + ' 卷第 ' + issue + ' 期');
+  Logger.log('       ✓ 辨識主日：' + finalDate);
+
+  Logger.log('  [6/6] 上傳至 GitHub Gist...');
+  const gistFilename = 'tkch-bulletin-' + finalDate + '.html';
+  const gistTitle    = '德光長老教會週報 ' + finalDate;
+  const publicUrl    = uploadHtmlToGist(finalHtml, gistFilename, gistTitle, githubToken);
+  Logger.log('       ✓ 公開網址：' + publicUrl);
+
+  updateBulletinIndex({
+    volume:      volume,
+    issue:       issue,
+    title:       title,
+    url:         publicUrl,
+    date:        finalDate,
+    publishedAt: finalDate + 'T00:00:00.000Z',
+  }, githubToken);
+  Logger.log('       ✓ 歷期目錄索引已更新！');
+}
+
+function callGeminiWithPdf(pdfBase64, fallbackDateStr, apiKey, extractedUrls) {
+  const resolvedUrls = resolveUrlsMetadata(extractedUrls);
+  const urlsContext = buildUrlsContext(resolvedUrls);
+
+  const systemPrompt =
+`你是德光長老教會週報的數位排版助理，也是嚴謹的繁體中文校對者。
+任務：把這份週報 PDF 轉成適合手機與電腦閱讀的響應式 HTML。
+
+═══════════════════════════════
+【規則 1】嚴格排除奉獻資料
+═══════════════════════════════
+絕對不得包含任何與奉獻相關的內容，包括：
+- 奉獻金額、奉獻總計、感謝奉獻、本週奉獻、各項基金收支
+- 奉獻芳名錄、個人姓名搭配金額的表格或條目
+請直接略過所有奉獻段落，不需留下任何省略提示。
+
+${urlsContext}
+
+═══════════════════════════════
+【規則 2】回傳格式
+═══════════════════════════════
+你的回覆第一行必須是精確的 JSON 標頭，格式如下（不要加 markdown 標記）：
+META:{"volume":33,"issue":24,"date":"2026-09-27","title":"第 33 卷第 24 期"}
+（請從週報首頁印製的文字自動擷取：卷數 volume、期數 issue、主日西元日期 date）
+第二行開始輸出完整的 HTML 代碼（包含 <!DOCTYPE html>、<html>、<head>、<body> 等）。
+切勿在 HTML 頭尾加上 \`\`\`html 或 \`\`\` 符號。
+
+═══════════════════════════════
+【規則 3】排版、用語與錯字
+═══════════════════════════════
+1. 主要章節（教會消息、牧區消息、教界消息、本週事奉表、代禱事項、主日講道大綱等）使用 <details><summary> 做成可展開收合的摺疊框。
+   【重要】所有 <details> 預設必須收合，不可加 open 屬性。
+2. 【用詞必須完全一致】
+   - 章節名稱是「教界消息」（台南中會、友會消息）。嚴禁「業界消息」「界界消息」「教際消息」。
+   - 「事奉表」不是「侍奉表」或「事俸表」。
+   - 「代禱事項」不是「帶禱事項」。
+   - 「週報」不是「周報」。
+   - 「慕道班」不是「慕道版」。
+   - 「擘餅」不是「掰餅」。
+   - 教會全名是「德光長老教會」。
+3. 一律使用台灣繁體中文，禁止簡體字（会/学/礼/祷/经/长/圣/团 等）。
+4. 頂部 Header：優雅顯示「德光長老教會」、「主日禮拜週報」及主日日期。
+5. 風格配色：白底、深灰文字 #334155、高雅金 #C9A84C、莫蘭迪藍 #5850EC。
+6. 版面居中，最大寬度 650px，邊距適中，完美適應手機螢幕。
+7. 事奉人員分配表需支援手機橫向滑動排版。
+8. 超連結按鈕使用 class="qr-link"，並加 target="_blank" rel="noopener noreferrer"。`;
+
+  const userPrompt = '請將這份週報 PDF 轉為 HTML。推估主日日期約為 ' + fallbackDateStr + '，請以 PDF 內文印製的實際日期與卷期為主。所有按鈕網址必須使用系統提供的完整網址，禁止省略。輸出前請再校對「教界消息」與繁體用字。';
+
+  const requestBody = {
+    contents: [{
+      parts: [
+        { text: systemPrompt },
+        { inline_data: { mime_type: 'application/pdf', data: pdfBase64 } },
+        { text: userPrompt }
+      ]
+    }],
+    generationConfig: {
+      temperature: 0.1,
+      maxOutputTokens: 32768
+    }
+  };
+
+  const fetchOptions = {
+    method: 'POST',
+    contentType: 'application/json',
+    headers: {
+      'x-goog-api-key': apiKey.trim()
+    },
+    payload: JSON.stringify(requestBody),
+    muteHttpExceptions: true
+  };
+
+  for (const model of GEMINI_MODELS) {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(apiKey.trim());
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const response = UrlFetchApp.fetch(url, fetchOptions);
+      const status   = response.getResponseCode();
+      if (status === 503 && attempt === 1) {
+        Logger.log('       ⏳ ' + model + ' 暫時忙碌，等待 4 秒後重試...');
+        Utilities.sleep(4000);
+        continue;
+      }
+      if (status !== 200) {
+        const errSnippet = response.getContentText().slice(0, 150);
+        Logger.log('       ⚠️ ' + model + ' 回應 HTTP ' + status + '：' + errSnippet);
+        break;
+      }
+      const resJson = JSON.parse(response.getContentText());
+      const candidate = (resJson.candidates || [])[0] || {};
+      const rawText = (candidate.content && candidate.content.parts && candidate.content.parts[0] && candidate.content.parts[0].text) || '';
+      if (!rawText) {
+        Logger.log('       ⚠️ ' + model + ' 回傳內容為空');
+        break;
+      }
+      if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+        Logger.log('       ⚠️ 模型結束原因：' + candidate.finishReason + '（若為 MAX_TOKENS 將嘗試補上結尾標籤）');
+      }
+      Logger.log('       ✓ 成功使用模型：' + model);
+      return parseGeminiResponse(rawText, fallbackDateStr);
+    }
+  }
+  throw new Error('所有 Gemini 模型均調用失敗，請先執行 testGeminiConnection() 查看診斷資訊。');
+}
+
+function buildUrlsContext(resolvedUrls) {
+  const knownList = KNOWN_ACTIVITY_BUTTONS.map(function (item, idx) {
+    return (idx + 1) + '. ' + item.keys[0] + '：\n   必須放置：<p><a href="' + item.href + '" target="_blank" rel="noopener noreferrer" class="qr-link">' + item.label + '</a></p>';
+  }).join('\n');
+
+  const extraItems = (resolvedUrls || []).filter(function (item) {
+    if (item.isOffering) return false;
+    const alreadyKnown = KNOWN_ACTIVITY_BUTTONS.some(function (k) {
+      return item.url.indexOf(k.match) !== -1;
+    });
+    return !alreadyKnown;
+  });
+
+  let extraBlock = '本次 PDF 未抽出額外新網址。若畫面有 QR Code，請對照上方常設清單，禁止自己發明或截斷網址。';
+  if (extraItems.length > 0) {
+    extraBlock = extraItems.map(function (item, idx) {
+      return (idx + 1) + '. 【' + item.label + '】\n   真實網址：' + item.url + '\n   對應說明：' + item.desc;
+    }).join('\n\n');
+  }
+
+  return (
+    '═══════════════════════════════════════════════════════\n' +
+    '【核心指令：超連結（有提到活動就必須放入完整網址）】\n' +
+    '═══════════════════════════════════════════════════════\n' +
+    '你禁止自己發明、改寫、縮短或加省略號（... 或 …）到任何網址。\n' +
+    'HTML 裡每一個 href 必須是下面提供的【完整字串】，一個字都不能少。\n' +
+    '若 PDF 上的 QR Code 看不清，仍然必須使用下列完整網址，不要猜測。\n\n' +
+    '【常設活動按鈕——內文只要出現關鍵字就必須放入】：\n' +
+    knownList + '\n\n' +
+    '【從 PDF 註解層抽出的其他網址】：\n' +
+    extraBlock + '\n\n' +
+    '【嚴格排版要求】：\n' +
+    '- 只要週報內文有提到「慕道班」「中保代禱」「從懷疑到相信」「小步走」「愛相隨」，就必須在該項目後附上對應按鈕。\n' +
+    '- 嚴格禁止輸出任何包含 "..." 或 "…" 的網址。\n' +
+    '- 嚴格排除任何奉獻連結與奉獻 QR Code。\n'
+  );
+}
+
+function parseGeminiResponse(rawText, fallbackDateStr) {
+  let text = String(rawText || '').trim();
+  if (text.startsWith('```html')) text = text.slice(7);
+  else if (text.startsWith('```')) text = text.slice(3);
+  if (text.endsWith('```')) text = text.slice(0, -3);
+  text = text.trim();
+
+  let volume = 0, issue = 0, date = fallbackDateStr, title = '';
+  const metaMatch = text.match(/META:\s*(\{[\s\S]*?\})/);
+  if (metaMatch) {
+    try {
+      const meta = JSON.parse(metaMatch[1]);
+      volume = meta.volume || 0;
+      issue  = meta.issue  || 0;
+      date   = meta.date   || fallbackDateStr;
+      title  = meta.title  || '';
+    } catch (e) {
+      Logger.log('       ⚠️ META 解析異常');
+    }
+  }
+
+  let html = text;
+  const doctypeAt = text.search(/<!DOCTYPE/i);
+  const htmlAt = text.search(/<html/i);
+  const start = doctypeAt >= 0 ? doctypeAt : htmlAt;
+  if (start >= 0) {
+    html = text.slice(start).trim();
+  } else {
+    const lines = text.split('\n');
+    let htmlStart = 0;
+    if (lines[0] && lines[0].indexOf('META:') === 0) htmlStart = 1;
+    html = lines.slice(htmlStart).join('\n').trim();
+  }
+  return { html: html, volume: volume, issue: issue, date: date, title: title };
+}
+
+function extractDateFromFilename(filename) {
+  const m8 = filename.match(/(\d{4})(\d{2})(\d{2})/);
+  if (m8) {
+    return m8[1] + '-' + m8[2] + '-' + m8[3];
+  }
+  const m4 = filename.match(/^(\d{2})[-_]?(\d{2})/);
+  if (m4) {
+    return '2023-' + m4[1] + '-' + m4[2];
+  }
+  return '2020-01-01';
+}
+
+function uploadHtmlToGist(htmlContent, filename, description, githubToken) {
+  const options = {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Bearer ' + githubToken,
+      'Content-Type':  'application/json',
+      'User-Agent':    'TkchWeekNews-AppsScript',
+    },
+    payload: JSON.stringify({
+      description: description,
+      public:      true,
+      files:       { [filename]: { content: htmlContent } }
+    }),
+    muteHttpExceptions: true
+  };
+  const res = UrlFetchApp.fetch('https://api.github.com/gists', options);
+  if (res.getResponseCode() !== 201) {
+    throw new Error('GitHub Gist 上傳失敗: HTTP ' + res.getResponseCode() + ' ' + res.getContentText().slice(0, 200));
+  }
+  const data   = JSON.parse(res.getContentText());
+  const rawUrl = data.files[filename].raw_url;
+  return 'https://htmlpreview.github.io/?' + rawUrl;
+}
+
+function updateBulletinIndex(newEntry, githubToken) {
+  const headers = {
+    'Authorization': 'Bearer ' + githubToken,
+    'Content-Type':  'application/json',
+    'User-Agent':    'TkchWeekNews-AppsScript',
+  };
+  const listRes = UrlFetchApp.fetch(
+    'https://api.github.com/users/' + GITHUB_USERNAME + '/gists?per_page=100',
+    { headers: headers, muteHttpExceptions: true }
+  );
+  const gists = JSON.parse(listRes.getContentText());
+  const existingGist = gists.find(g => g.description === INDEX_DESCRIPTION);
+  let updatedList = [newEntry];
+  if (existingGist) {
+    const detailRes = UrlFetchApp.fetch(
+      'https://api.github.com/gists/' + existingGist.id,
+      { headers: headers, muteHttpExceptions: true }
+    );
+    const detail  = JSON.parse(detailRes.getContentText());
+    const content = detail.files[INDEX_FILENAME] && detail.files[INDEX_FILENAME].content;
+    if (content) {
+      try {
+        const existing = JSON.parse(content);
+        const idx = existing.findIndex(e => e.volume === newEntry.volume && e.issue === newEntry.issue);
+        if (idx !== -1 && newEntry.volume > 0) {
+          existing[idx] = newEntry;
+          updatedList = existing;
+        } else {
+          updatedList = [newEntry].concat(existing);
+        }
+      } catch (e) {
+        Logger.log('⚠️ 索引 JSON 解析異常');
+      }
+    }
+    updatedList.sort(function(a, b) {
+      return (b.date || '').localeCompare(a.date || '');
+    });
+    UrlFetchApp.fetch('https://api.github.com/gists/' + existingGist.id, {
+      method:  'PATCH',
+      headers: headers,
+      payload: JSON.stringify({
+        description: INDEX_DESCRIPTION,
+        files: { [INDEX_FILENAME]: { content: JSON.stringify(updatedList, null, 2) } }
+      }),
+      muteHttpExceptions: true
+    });
+  } else {
+    updatedList.sort(function(a, b) {
+      return (b.date || '').localeCompare(a.date || '');
+    });
+    UrlFetchApp.fetch('https://api.github.com/gists', {
+      method:  'POST',
+      headers: headers,
+      payload: JSON.stringify({
+        description: INDEX_DESCRIPTION,
+        public:      true,
+        files: { [INDEX_FILENAME]: { content: JSON.stringify(updatedList, null, 2) } }
+      }),
+      muteHttpExceptions: true
+    });
+  }
+}
+
+function sortCurrentIndexGist() {
+  const props = PropertiesService.getScriptProperties();
+  const token = props.getProperty('GITHUB_TOKEN');
+  if (!token) {
+    Logger.log('❌ 尚未設定 GITHUB_TOKEN');
+    return;
+  }
+  const headers = {
+    'Authorization': 'Bearer ' + token,
+    'Content-Type':  'application/json',
+    'User-Agent':    'TkchWeekNews-AppsScript',
+  };
+  const listRes = UrlFetchApp.fetch(
+    'https://api.github.com/users/' + GITHUB_USERNAME + '/gists?per_page=100',
+    { headers: headers, muteHttpExceptions: true }
+  );
+  const gists = JSON.parse(listRes.getContentText());
+  const existingGist = gists.find(g => g.description === INDEX_DESCRIPTION);
+  if (!existingGist) {
+    Logger.log('❌ 找不到目錄 Gist');
+    return;
+  }
+  const detailRes = UrlFetchApp.fetch(
+    'https://api.github.com/gists/' + existingGist.id,
+    { headers: headers, muteHttpExceptions: true }
+  );
+  const detail  = JSON.parse(detailRes.getContentText());
+  const content = detail.files[INDEX_FILENAME] && detail.files[INDEX_FILENAME].content;
+  if (!content) {
+    Logger.log('❌ 目錄內容為空');
+    return;
+  }
+  const list = JSON.parse(content);
+  Logger.log('📋 目前目錄共有 ' + list.length + ' 筆資料，正在重新排序...');
+  list.forEach(function(item) {
+    if (item.date) {
+      item.publishedAt = item.date + 'T00:00:00.000Z';
+    }
+  });
+  list.sort(function(a, b) {
+    return (b.date || '').localeCompare(a.date || '');
+  });
+  UrlFetchApp.fetch('https://api.github.com/gists/' + existingGist.id, {
+    method:  'PATCH',
+    headers: headers,
+    payload: JSON.stringify({
+      description: INDEX_DESCRIPTION,
+      files: { [INDEX_FILENAME]: { content: JSON.stringify(list, null, 2) } }
+    }),
+    muteHttpExceptions: true
+  });
+  Logger.log('🎉 排序完成！最新週報已成功置頂：');
+  Logger.log('   第 1 名：' + (list[0] ? (list[0].title + ' (' + list[0].date + ')') : '無'));
+}
+
+function getProcessedIds() {
+  const raw = PropertiesService.getScriptProperties().getProperty(PROCESSED_KEY);
+  if (!raw) return [];
+  try { return JSON.parse(raw); } catch (e) { return []; }
+}
+
+function markAsProcessed(fileId) {
+  const ids = getProcessedIds();
+  if (!ids.includes(fileId)) {
+    ids.push(fileId);
+    PropertiesService.getScriptProperties().setProperty(PROCESSED_KEY, JSON.stringify(ids));
+  }
+}
+
+function clearProcessedHistory() {
+  PropertiesService.getScriptProperties().deleteProperty(PROCESSED_KEY);
+  Logger.log('✅ 已清除已處理歷史記錄！');
+}
+
+function setupApiKeys() {
+  PropertiesService.getScriptProperties().setProperties({
+    'GEMINI_API_KEY': '在此貼上您的 Gemini API 金鑰',
+    'GITHUB_TOKEN':   '在此貼上您的 GitHub Token',
+  });
+  Logger.log('✅ 請把上面兩組佔位文字改成您自己的金鑰後再執行一次 setupApiKeys()');
+  Logger.log('⚠ 若金鑰曾貼在聊天或腳本裡公開過，請先到 Google AI Studio / GitHub 撤銷舊金鑰再換新的。');
+}
+
+function testGeminiConnection() {
+  const props = PropertiesService.getScriptProperties();
+  const key   = props.getProperty('GEMINI_API_KEY');
+  if (!key) {
+    Logger.log('❌ 尚未儲存 GEMINI_API_KEY，請先執行 setupApiKeys()');
+    return;
+  }
+  Logger.log('🔍 正在檢測 Gemini API 金鑰狀態...');
+  Logger.log('   金鑰前綴：' + key.slice(0, 10) + '... (長度: ' + key.length + ')');
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + encodeURIComponent(key.trim());
+  const options = {
+    method: 'GET',
+    headers: {
+      'x-goog-api-key': key.trim()
+    },
+    muteHttpExceptions: true
+  };
+  try {
+    const res    = UrlFetchApp.fetch(url, options);
+    const status = res.getResponseCode();
+    Logger.log('   HTTP 回應狀態碼：' + status);
+    if (status === 200) {
+      const data = JSON.parse(res.getContentText());
+      const models = (data.models || []).map(m => m.name.replace('models/', ''));
+      Logger.log('🎉 金鑰驗證成功！該金鑰支援的模型清單：');
+      Logger.log('   ' + models.slice(0, 10).join(', '));
+    } else {
+      Logger.log('❌ API 回應錯誤訊息：');
+      Logger.log(res.getContentText());
+    }
+  } catch (e) {
+    Logger.log('❌ 連線發生例外：' + e.message);
+  }
+}
+
+function diagnoseLatestPdf() {
+  Logger.log('🔍 診斷最新週報 PDF 的原始超連結...');
+  const deaconFolder = DriveApp.getFolderById(DEACON_FOLDER_ID);
+  const allPdfFiles = getAllPdfFilesRecursive(deaconFolder);
+  allPdfFiles.sort((a, b) => {
+    const dateA = extractDateFromFilename(a.getName());
+    const dateB = extractDateFromFilename(b.getName());
+    return dateB.localeCompare(dateA);
+  });
+  const latestFile = allPdfFiles[0];
+  if (!latestFile) {
+    Logger.log('❌ 找不到任何週報 PDF 檔案');
+    return;
+  }
+  Logger.log('🎯 檔案：' + latestFile.getName());
+  const urls = extractUrlsFromPdf(latestFile);
+  Logger.log('📎 抽出 ' + urls.length + ' 個網址：');
+  urls.forEach(function (u, i) {
+    Logger.log('   ' + (i + 1) + '. ' + u);
+  });
+  const resolved = resolveUrlsMetadata(urls);
+  resolved.forEach(function (item) {
+    Logger.log('   → ' + item.label + (item.isOffering ? '（將排除）' : '') + ' | ' + item.url);
+  });
+  if (urls.length === 0) {
+    Logger.log('⚠ 若週報上的連結其實是 QR 圖片而不是可點的 PDF 註解，這是正常的。v3 會改用關鍵字強制放入常設按鈕。');
+  }
+}
+
+function reprocessLatestBulletin() {
+  Logger.log('🔄 開始重新處理最新一期週報...');
+  const props = PropertiesService.getScriptProperties();
+  const GEMINI_API_KEY = props.getProperty('GEMINI_API_KEY');
+  const GITHUB_TOKEN   = props.getProperty('GITHUB_TOKEN');
+  if (!GEMINI_API_KEY || !GITHUB_TOKEN) {
+    Logger.log('❌ 請先執行 setupApiKeys()');
+    return;
+  }
+  const deaconFolder = DriveApp.getFolderById(DEACON_FOLDER_ID);
+  const allPdfFiles = getAllPdfFilesRecursive(deaconFolder);
+  allPdfFiles.sort((a, b) => {
+    const dateA = extractDateFromFilename(a.getName());
+    const dateB = extractDateFromFilename(b.getName());
+    return dateB.localeCompare(dateA);
+  });
+  const latestFile = allPdfFiles[0];
+  if (!latestFile) {
+    Logger.log('❌ 找不到任何週報 PDF 檔案');
+    return;
+  }
+  Logger.log('🎯 鎖定最新週報檔案：' + latestFile.getName());
+  try {
+    processOneBulletin(latestFile, GEMINI_API_KEY, GITHUB_TOKEN);
+    markAsProcessed(latestFile.getId());
+    sortCurrentIndexGist();
+    Logger.log('🎉 最新週報已重新處理完成，並已自動置頂！請重新整理網頁查看！');
+  } catch (e) {
+    Logger.log('❌ 處理失敗：' + e.message);
+  }
+}
+
+// ============================================================
+// 🔗 從 PDF 抽取原始超連結
+// ============================================================
+function extractUrlsFromPdf(file) {
+  const urls = [];
+  const seen = {};
+
+  function addUrl(raw) {
+    const u = normalizeExtractedUrl(raw);
+    if (!u || seen[u]) return;
+    if (!isUsefulBulletinUrl(u)) return;
+    seen[u] = true;
+    urls.push(u);
+  }
+
+  try {
+    const rawContent = file.getBlob().getDataAsString('ISO-8859-1');
+    scanPdfUriLiterals(rawContent, addUrl);
+    scanPdfUriHex(rawContent, addUrl);
+    scanPlainUrlsFromText(rawContent, addUrl);
+    inflateFlateStreamsAndScan(rawContent, addUrl);
+  } catch (e) {
+    Logger.log('  ⚠️ 抽取 PDF 內嵌網址異常：' + e.message);
+  }
+  return urls;
+}
+
+function scanPdfUriLiterals(rawContent, addUrl) {
+  const re = /\/URI\s*\(/gi;
+  let match;
+  while ((match = re.exec(rawContent)) !== null) {
+    const extracted = readPdfLiteralString(rawContent, match.index + match[0].length - 1);
+    if (extracted) addUrl(extracted);
+  }
+}
+
+function readPdfLiteralString(content, openParenIndex) {
+  if (content.charAt(openParenIndex) !== '(') return '';
+  let i = openParenIndex + 1;
+  let depth = 1;
+  let out = '';
+  while (i < content.length && depth > 0) {
+    const ch = content.charAt(i);
+    if (ch === '\\') {
+      const next = content.charAt(i + 1);
+      out += ch + next;
+      i += 2;
+      continue;
+    }
+    if (ch === '(') depth += 1;
+    else if (ch === ')') {
+      depth -= 1;
+      if (depth === 0) break;
+    }
+    if (depth > 0) out += ch;
+    i += 1;
+  }
+  return unescapePdfLiteral(out);
+}
+
+function unescapePdfLiteral(s) {
+  if (!s) return '';
+  return s
+    .replace(/\\\r\n/g, '')
+    .replace(/\\\n/g, '')
+    .replace(/\\\r/g, '')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\b/g, '\b')
+    .replace(/\\f/g, '\f')
+    .replace(/\\([0-7]{1,3})/g, function (_, oct) {
+      return String.fromCharCode(parseInt(oct, 8));
+    })
+    .replace(/\\([()\\])/g, '$1');
+}
+
+function scanPdfUriHex(rawContent, addUrl) {
+  const re = /\/URI\s*<([0-9A-Fa-f\s]+)>/g;
+  let match;
+  while ((match = re.exec(rawContent)) !== null) {
+    addUrl(hexToString(match[1]));
+  }
+}
+
+function hexToString(hex) {
+  const clean = String(hex || '').replace(/\s+/g, '');
+  if (!clean) return '';
+  let s = '';
+  if (clean.slice(0, 4).toUpperCase() === 'FEFF') {
+    for (let i = 4; i + 3 < clean.length; i += 4) {
+      s += String.fromCharCode(parseInt(clean.substr(i, 4), 16));
+    }
+    return s;
+  }
+  for (let i = 0; i + 1 < clean.length; i += 2) {
+    s += String.fromCharCode(parseInt(clean.substr(i, 2), 16));
+  }
+  return s;
+}
+
+function scanPlainUrlsFromText(rawContent, addUrl) {
+  const re = /https?:\/\/[a-zA-Z0-9.\-~:/?#\[\]@!$&'()*+,;=%_]+/gi;
+  let match;
+  while ((match = re.exec(rawContent)) !== null) {
+    addUrl(match[0]);
+  }
+}
+
+function inflateFlateStreamsAndScan(rawContent, addUrl) {
+  const re = /\/Filter\s*(?:\[\s*)?\/FlateDecode[\s\S]{0,500}?stream\r?\n/g;
+  let match;
+  let count = 0;
+  while ((match = re.exec(rawContent)) !== null && count < 60) {
+    const start = match.index + match[0].length;
+    const end = rawContent.indexOf('endstream', start);
+    if (end < 0) continue;
+    let data = rawContent.slice(start, end);
+    if (data.charAt(data.length - 1) === '\n') data = data.slice(0, -1);
+    if (data.charAt(data.length - 1) === '\r') data = data.slice(0, -1);
+    try {
+      const inflated = inflateZlibLatin1(data);
+      if (inflated) {
+        scanPdfUriLiterals(inflated, addUrl);
+        scanPdfUriHex(inflated, addUrl);
+        scanPlainUrlsFromText(inflated, addUrl);
+      }
+    } catch (e) {
+      // 單一 stream 失敗不影響其他抽取
+    }
+    count += 1;
+  }
+}
+
+function inflateZlibLatin1(latin1) {
+  const bytes = [];
+  for (let i = 0; i < latin1.length; i++) {
+    bytes.push(latin1.charCodeAt(i) & 0xFF);
+  }
+  if (bytes.length < 6) return '';
+  const hasZlibHeader = bytes[0] === 0x78 && (bytes[1] === 0x01 || bytes[1] === 0x9C || bytes[1] === 0xDA);
+  const deflateBody = hasZlibHeader ? bytes.slice(2, bytes.length - 4) : bytes.slice(0, bytes.length);
+  const gzipBytes = [0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]
+    .concat(deflateBody)
+    .concat([0, 0, 0, 0, 0, 0, 0, 0]);
+  try {
+    const blob = Utilities.newBlob(gzipBytes, 'application/x-gzip', 'x.gz');
+    const out = Utilities.ungzip(blob);
+    return out.getDataAsString('ISO-8859-1');
+  } catch (e) {
+    return '';
+  }
+}
+
+function decodePercentEncoding(str) {
+  if (!str) return '';
+  try {
+    return decodeURIComponent(str.replace(/\+/g, '%20'));
+  } catch (e) {
+    try {
+      return decodeURIComponent(str.replace(/%(?![0-9A-Fa-f]{2})/g, '%25'));
+    } catch (e2) {
+      return str;
+    }
+  }
+}
+
+function normalizeExtractedUrl(raw) {
+  if (!raw) return '';
+  let u = String(raw);
+  u = unescapePdfLiteral(u);
+  u = decodePercentEncoding(u);
+  u = u.replace(/[\s\r\n\0]+/g, '');
+  u = u.replace(/[.,;:!?）)\]>]+$/g, '');
+  u = u.replace(/\\+$/g, '');
+  if (u.indexOf('http://') !== 0 && u.indexOf('https://') !== 0) {
+    const found = u.match(/https?:\/\/.+/i);
+    u = found ? found[0] : '';
+  }
+  if (!u) return '';
+  if (u.indexOf('...') !== -1 || u.indexOf('…') !== -1) return '';
+  return u;
+}
+
+function isUsefulBulletinUrl(u) {
+  if (!u || u.length < 12 || u.length > 500) return false;
+  if (!/^https?:\/\//i.test(u)) return false;
+  if (JUNK_URL_RE.test(u)) return false;
+  return true;
+}
+
+function resolveUrlsMetadata(urls) {
+  if (!urls || urls.length === 0) return [];
+  const dict = KNOWN_ACTIVITY_BUTTONS.map(function (item) {
+    return {
+      match: item.match,
+      label: item.label,
+      desc: '週報出現「' + item.keys[0] + '」時必須放入此按鈕。',
+      isOffering: item.isOffering
+    };
+  }).concat(KNOWN_URL_META);
+
+  const results = [];
+  for (const u of urls) {
+    let matched = null;
+    for (const item of dict) {
+      if (u.indexOf(item.match) !== -1) {
+        matched = {
+          url: u,
+          label: item.label,
+          desc: item.desc,
+          isOffering: item.isOffering
+        };
+        break;
+      }
+    }
+    if (matched) {
+      results.push(matched);
+      continue;
+    }
+    Logger.log('  🔍 發現全新網址，自動探測標題：' + u);
+    const autoTitle = fetchPageTitle(u);
+    Logger.log('     ✓ 探測到網頁標題：' + (autoTitle || '未知標題'));
+    const isOff = (autoTitle && autoTitle.indexOf('奉獻') !== -1) ||
+      u.indexOf('donation') !== -1 ||
+      u.indexOf('giving') !== -1;
+    results.push({
+      url: u,
+      label: autoTitle || '活動連結',
+      desc: '自動探測網頁標題為「' + autoTitle + '」，請根據此標題放入週報中對應的相關段落。',
+      isOffering: isOff
+    });
+  }
+  return results;
+}
+
+function fetchPageTitle(url) {
+  try {
+    const res = UrlFetchApp.fetch(url, {
+      muteHttpExceptions: true,
+      followRedirects: true,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+      }
+    });
+    if (res.getResponseCode() === 200) {
+      const html = res.getContentText();
+      const m = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (m && m[1]) {
+        return m[1].trim().replace(/\s*[-|_|–]\s*.*$/, '').trim();
+      }
+    }
+  } catch (e) {
+    Logger.log('     ⚠️ 探測標題失敗：' + e.message);
+  }
+  return '';
+}
+
+// ============================================================
+// ✏ HTML 後處理：真實網址 + 錯字（不依賴模型有沒有聽話）
+// ============================================================
+function finalizeBulletinHtml(html, resolvedUrls) {
+  let out = html || '';
+  out = applyTypoFixes(out);
+  out = fixBrokenAnchors(out, resolvedUrls);
+  out = injectKeywordButtons(out);
+  out = stripOfferingLinks(out, resolvedUrls);
+  out = repairTruncatedHtml(out);
+  return out;
+}
+
+function applyTypoFixes(html) {
+  let out = html;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < TYPO_FIXES.length; i++) {
+      const from = TYPO_FIXES[i][0];
+      const to = TYPO_FIXES[i][1];
+      if (from !== to) {
+        out = out.split(from).join(to);
+      }
+    }
+  }
+  return out;
+}
+
+function collectCanonicalUrls(resolvedUrls) {
+  const list = [];
+  const seen = {};
+  function push(u) {
+    if (!u || seen[u] || u.indexOf('...') !== -1) return;
+    seen[u] = true;
+    list.push(u);
+  }
+  KNOWN_ACTIVITY_BUTTONS.forEach(function (item) {
+    if (!item.isOffering) push(item.href);
+  });
+  (resolvedUrls || []).forEach(function (item) {
+    if (!item.isOffering) push(item.url);
+  });
+  return list;
+}
+
+function findBestUrlMatch(href, canonical) {
+  if (!href) return '';
+  const clean = href.replace(/\.\.\./g, '').replace(/[…]+/g, '').replace(/[.,;]+$/g, '');
+  if (canonical.indexOf(href) !== -1) return href;
+  if (canonical.indexOf(clean) !== -1) return clean;
+  let best = '';
+  for (let i = 0; i < canonical.length; i++) {
+    const u = canonical[i];
+    if (u.indexOf(clean) === 0 && clean.length >= 24) return u;
+    if (clean.indexOf(u) === 0) return u;
+    const stem = u.replace(/https?:\/\//, '').slice(0, 40);
+    if (stem && href.indexOf(stem) !== -1) {
+      if (u.length > best.length) best = u;
+    }
+  }
+  return best;
+}
+
+function fixBrokenAnchors(html, resolvedUrls) {
+  const canonical = collectCanonicalUrls(resolvedUrls);
+  return html.replace(/href\s*=\s*(["'])([\s\S]*?)\1/gi, function (full, quote, href) {
+    const raw = String(href || '').trim();
+    if (!raw) return full;
+    if (raw.indexOf('...') !== -1 || raw.indexOf('…') !== -1 || /https?:\/\/\S+\.\.\./.test(raw)) {
+      const matched = findBestUrlMatch(raw, canonical);
+      if (matched) return 'href=' + quote + matched + quote;
+    }
+    if (/^https?:\/\//i.test(raw)) {
+      const matched = findBestUrlMatch(raw, canonical);
+      if (matched && matched !== raw && (raw.length < matched.length || raw.indexOf('...') !== -1)) {
+        return 'href=' + quote + matched + quote;
+      }
+    }
+    return full;
+  });
+}
+
+function injectKeywordButtons(html) {
+  let out = html;
+  KNOWN_ACTIVITY_BUTTONS.forEach(function (item) {
+    if (item.isOffering) return;
+    const hasKeyword = item.keys.some(function (k) { return out.indexOf(k) !== -1; });
+    if (!hasKeyword) return;
+    if (out.indexOf(item.href) !== -1) return;
+    const button = '<p><a href="' + item.href + '" target="_blank" rel="noopener noreferrer" class="qr-link">' + item.label + '</a></p>';
+    let inserted = false;
+    for (let i = 0; i < item.keys.length; i++) {
+      const key = item.keys[i];
+      const idx = out.indexOf(key);
+      if (idx === -1) continue;
+      const rest = out.slice(idx);
+      const close = rest.match(/<\/(p|li|h[1-6]|div|td|blockquote|summary)>/i);
+      if (close) {
+        const at = idx + close.index + close[0].length;
+        out = out.slice(0, at) + '\n' + button + out.slice(at);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) out += '\n' + button;
+    Logger.log('       ✓ 已補上按鈕：' + item.label);
+  });
+  return out;
+}
+
+function stripOfferingLinks(html, resolvedUrls) {
+  let out = html;
+  (resolvedUrls || []).forEach(function (item) {
+    if (!item.isOffering) return;
+    const escaped = item.url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp('<a\\b[^>]*href=["\']' + escaped + '["\'][^>]*>[\\s\\S]*?<\\/a>', 'gi'), '');
+  });
+  out = out.replace(/<a\b[^>]*href=["'][^"']*(Egm6bA|donation|giving)[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, '');
+  return out;
+}
+
+function repairTruncatedHtml(html) {
+  let out = html;
+  if (!/<\/body>/i.test(out)) out += '\n</body>';
+  if (!/<\/html>/i.test(out)) out += '\n</html>';
+  return out;
+}

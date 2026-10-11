@@ -83,6 +83,9 @@
           return;
         }
 
+        // 永遠依主日日期由新到舊排序，保證第一張卡片一定是最新一期
+        bulletins.sort((a, b) => (b.date || b.publishedAt || '').localeCompare(a.date || a.publishedAt || ''));
+
         // Render cards
         loadingEl.style.display = 'none';
         gridEl.style.display = 'grid';
@@ -104,10 +107,21 @@
         card.rel = 'noopener noreferrer';
         card.className = 'bulletin-card' + (isLatest ? ' latest' : '');
 
-        const dateObj = new Date(bulletin.publishedAt || bulletin.date);
-        const formattedDate = dateObj.toLocaleDateString('zh-TW', {
-          year: 'numeric', month: 'long', day: 'numeric', weekday: 'long'
-        });
+        const rawDate = bulletin.date || bulletin.publishedAt;
+        let formattedDate = '';
+        if (rawDate) {
+          const parts = rawDate.slice(0, 10).split('-');
+          if (parts.length === 3) {
+            const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            formattedDate = d.toLocaleDateString('zh-TW', {
+              year: 'numeric', month: 'long', day: 'numeric', weekday: 'long'
+            });
+          } else {
+            formattedDate = new Date(rawDate).toLocaleDateString('zh-TW', {
+              year: 'numeric', month: 'long', day: 'numeric', weekday: 'long'
+            });
+          }
+        }
 
         card.innerHTML = `
           ${isLatest ? '<div class="latest-badge">✨ 本週週報</div>' : ''}
