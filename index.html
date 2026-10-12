@@ -381,12 +381,16 @@
       });
     }
 
-    function updateModeLabel() {
+    function updateModeLabel(status) {
       const lbl = document.getElementById('ai-mode-label');
       if (!lbl) return;
-      const hasKey = !!getGeminiKey();
-      lbl.textContent = hasKey ? '✨ Gemini AI 模式' : '📚 本地搜尋模式';
-      lbl.style.color = hasKey ? '#4CAF50' : '#aaa';
+      if (status === 'local') {
+        lbl.textContent = '📚 本地備援模式';
+        lbl.style.color = '#f59e0b';
+      } else {
+        lbl.textContent = '✨ 德光 Gemini AI';
+        lbl.style.color = '#4CAF50';
+      }
     }
 
     // 更新模式標籤（開啟對話框時）
@@ -508,6 +512,7 @@
         if (res.ok) {
           const data = await res.json();
           if (data && data.answer) {
+            updateModeLabel('cloud');
             loadingMsg.innerHTML = formatBotAnswer(data.answer);
             chatMessages.scrollTop = chatMessages.scrollHeight;
             return;
@@ -534,13 +539,13 @@ ${bulletinContext}
 
 會友的問題：「${query}」`;
 
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
           const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents: [{ role: 'user', parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.3, maxOutputTokens: 512 }
+              generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }
             })
           });
 
@@ -548,6 +553,7 @@ ${bulletinContext}
             const data = await res.json();
             const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
             if (answer) {
+              updateModeLabel('cloud');
               loadingMsg.innerHTML = formatBotAnswer(answer);
               chatMessages.scrollTop = chatMessages.scrollHeight;
               return;
@@ -559,6 +565,7 @@ ${bulletinContext}
       }
 
       // 步驟 2：無縫降級至【本地智慧關鍵字搜尋備援】
+      updateModeLabel('local');
       performLocalSearchFallback(query, loadingMsg);
     }
 
