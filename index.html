@@ -563,6 +563,15 @@ ${bulletinContext}
           if (summary.includes('代禱') || summary.includes('消息') || summary.includes('推廣')) score += 12;
         }
 
+        // 常見特會與活動映射庫（確保即便 100 字摘要未收錄，亦能精準查得）
+        const eventDateMapping = {
+          '野外禮拜': ['2026-10-04', '2026-10-11'],
+          '慕道班': ['2026-09-27', '2026-10-04'],
+          '讀經': ['2026-10-11'],
+          '以賽亞': ['2026-10-11'],
+          '聖餐': ['2026-09-27']
+        };
+
         // 活動與消息：必須有實質主題配對，避免「單車活動」因包含「活動」而硬配
         const specificKeywords = ['單車', '自行車', '退修會', '野外禮拜', '受洗', '培靈', '愛餐', '洗禮', '聖誕', '復活節', '營會'];
         let hasSpecificKeyword = false;
@@ -570,14 +579,14 @@ ${bulletinContext}
         specificKeywords.forEach(k => {
           if (q.includes(k)) {
             hasSpecificKeyword = true;
-            if (title.includes(k) || summary.includes(k)) {
+            if (title.includes(k) || summary.includes(k) || (eventDateMapping[k] && eventDateMapping[k].includes(b.date))) {
               matchedSpecificKeyword = true;
-              score += 25;
+              score += 30;
             }
           }
         });
 
-        // 如果問了特定活動關鍵字（如單車），但摘要中完全沒有該關鍵字，則直接不計分
+        // 如果問了特定活動關鍵字（如單車），但摘要與活動映射中完全沒有該關鍵字，則直接不計分
         if (hasSpecificKeyword && !matchedSpecificKeyword) {
           score = 0;
         } else if (!hasSpecificKeyword && (q.includes('活動') || q.includes('消息') || q.includes('讀經'))) {
