@@ -607,7 +607,6 @@ ${bulletinContext}
         msgElement.innerHTML = reply;
         chatMessages.scrollTop = chatMessages.scrollHeight;
         return;
-      }
       } else {
         const best = results[0].bulletin;
         const otherMatches = results.filter(r => r.bulletin !== best && r.bulletin.summary);
