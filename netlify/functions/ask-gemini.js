@@ -83,6 +83,31 @@ ${bulletinContext}`;
       }
     }
 
+    if (payload.testModel) {
+      try {
+        const m = payload.testModel.replace('models/', '');
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey.trim()}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: 'Ping' }] }]
+          })
+        });
+        const resText = await response.text();
+        return {
+          statusCode: response.status,
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ status: response.status, result: resText })
+        };
+      } catch (err) {
+        return {
+          statusCode: 500,
+          body: JSON.stringify({ error: err.message })
+        };
+      }
+    }
+
     const modelsToTry = [
       'gemini-3.8-flash',
       'gemini-3.7-flash',
