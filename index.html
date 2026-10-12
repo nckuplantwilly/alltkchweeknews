@@ -297,32 +297,42 @@
     let cachedBulletins = [];
 
     // 儲存全域已載入的週報清單以供 AI 小幫手檢索
+    const DIRECT_INDEX_RAW_URL = 'https://gist.githubusercontent.com/wowidance-cloud/37ecf3ae2af23a0c004e5fb107f2a570/raw/tkch-bulletin-index.json';
+
     async function loadBulletins() {
       const loadingEl = document.getElementById('loading-state');
       const errorEl = document.getElementById('error-state');
       const gridEl = document.getElementById('bulletin-grid');
 
       try {
-        // Fetch all public gists for the user (no auth needed for public gists)
-        const res = await fetch(`https://api.github.com/users/${GITHUB_USERNAME}/gists?per_page=100`);
-        if (!res.ok) throw new Error('無法連接 GitHub API');
-        const gists = await res.json();
+        let bulletins = null;
 
-        // Find the index gist
-        const indexGist = gists.find(g => g.description === INDEX_DESCRIPTION);
-        if (!indexGist) {
-          loadingEl.style.display = 'none';
-          errorEl.style.display = 'flex';
-          return;
+        // 策略 1：優先直接以 Raw 靜態讀取（速度極快、永不受 GitHub 60 次/小時 API 額度限制）
+        try {
+          const rawRes = await fetch(`${DIRECT_INDEX_RAW_URL}?t=${Date.now()}`);
+          if (rawRes.ok) {
+            bulletins = await rawRes.json();
+          }
+        } catch (e) {
+          console.warn('Direct raw fetch failed, trying Gist API fallback...', e);
         }
 
-        // Fetch index gist content
-        const detailRes = await fetch(`https://api.github.com/gists/${indexGist.id}`);
-        const detail = await detailRes.json();
-        const rawContent = detail.files[INDEX_FILENAME]?.content;
-        if (!rawContent) throw new Error('目錄資料為空');
+        // 策略 2：若 Raw 失敗，使用 Gist API 動態查詢備援
+        if (!bulletins || !Array.isArray(bulletins)) {
+          const res = await fetch(`https://api.github.com/users/${GITHUB_USERNAME}/gists?per_page=100`);
+          if (!res.ok) throw new Error('無法連接 GitHub API');
+          const gists = await res.json();
 
-        const bulletins = JSON.parse(rawContent);
+          const indexGist = gists.find(g => g.description === INDEX_DESCRIPTION);
+          if (!indexGist) throw new Error('找不到目錄 Gist');
+
+          const detailRes = await fetch(`https://api.github.com/gists/${indexGist.id}`);
+          const detail = await detailRes.json();
+          const rawContent = detail.files[INDEX_FILENAME]?.content;
+          if (!rawContent) throw new Error('目錄資料為空');
+          bulletins = JSON.parse(rawContent);
+        }
+
         if (!bulletins || bulletins.length === 0) {
           loadingEl.style.display = 'none';
           errorEl.style.display = 'flex';
