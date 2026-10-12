@@ -54,6 +54,69 @@
     </footer>
   </div>
 
+  <!-- AI 小幫手：浮動按鈕與對話視窗 -->
+  <div class="ai-assistant-wrapper" id="ai-assistant-wrapper">
+    <!-- 浮動啟動按鈕 -->
+    <button type="button" class="ai-float-btn" id="ai-float-btn" aria-label="打開週報 AI 小幫手" title="週報 AI 小幫手">
+      <span class="ai-icon">💬</span>
+      <span class="ai-btn-text">AI 小幫手</span>
+    </button>
+
+    <!-- 聊天對話視窗 -->
+    <div class="ai-chat-window" id="ai-chat-window" style="display:none;" role="dialog" aria-label="週報 AI 小幫手對話視窗">
+      <div class="ai-chat-header">
+        <div class="ai-header-title">
+          <span class="ai-header-dot"></span>
+          <span>德光週報 AI 小幫手</span>
+        </div>
+        <button type="button" class="ai-close-btn" id="ai-close-btn" aria-label="關閉小幫手" title="關閉">✕</button>
+      </div>
+
+      <!-- 快速快捷標籤 -->
+      <div class="ai-quick-tags" id="ai-quick-tags">
+        <span class="ai-tag-tip">常見搜尋：</span>
+        <button type="button" class="ai-tag-btn" onclick="askQuickPrompt('最新一期週報')">✨ 最新一期</button>
+        <button type="button" class="ai-tag-btn" onclick="askQuickPrompt('牧師講道')">📖 牧師講道</button>
+        <button type="button" class="ai-tag-btn" onclick="askQuickPrompt('教會代禱事項')">🙏 代禱事項</button>
+        <button type="button" class="ai-tag-btn" onclick="askQuickPrompt('讀經與團契活動')">🌿 活動與消息</button>
+      </div>
+
+      <!-- 訊息列表 -->
+      <div class="ai-chat-messages" id="ai-chat-messages">
+        <div class="ai-msg ai-msg-bot">
+          平安！我是德光週報的 AI 小幫手 🕊️<br>
+          您可以問我：「哪一期講約伯記？」、「最近有什麼代禱事項？」或點選上方標籤快速查找喔！
+        </div>
+      </div>
+
+      <!-- 輸入框區域 -->
+      <form class="ai-chat-input-bar" id="ai-chat-form" onsubmit="handleUserSubmit(event)">
+        <input type="text" id="ai-user-input" placeholder="請輸入想查詢的主題、經文或消息..." autocomplete="off" aria-label="詢問週報問題">
+        <button type="submit" id="ai-send-btn" aria-label="發送問題">發送</button>
+      </form>
+      <!-- 底部設定列 -->
+      <div class="ai-footer-bar">
+        <button type="button" class="ai-setting-btn" onclick="openKeyModal()" title="設定 Gemini AI Key">⚙️ AI 設定</button>
+        <span class="ai-mode-label" id="ai-mode-label"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Gemini Key 設定 Modal -->
+  <div class="ai-key-modal-overlay" id="ai-key-modal-overlay" style="display:none;" onclick="closeKeyModal(event)">
+    <div class="ai-key-modal" role="dialog" aria-label="Gemini API Key 設定">
+      <h3>⚙️ AI 設定</h3>
+      <p>輸入您的 Gemini API Key，儲存在本機瀏覽器中（不會上傳伺服器）。</p>
+      <p style="font-size:0.8em;color:#888;">取得免費 Key：<a href="https://aistudio.google.com/app/apikey" target="_blank">Google AI Studio</a></p>
+      <input type="password" id="gemini-key-input" placeholder="請貼上您的 Gemini API Key" autocomplete="off" style="width:100%;padding:8px;margin:8px 0;border:1px solid #ccc;border-radius:6px;font-size:1em;">
+      <div class="ai-key-modal-btns">
+        <button type="button" onclick="saveKeyModal()">✅ 儲存</button>
+        <button type="button" onclick="clearKeyModal()" style="background:#aaa;">🗑️ 清除 Key</button>
+        <button type="button" onclick="closeKeyModal(null)" style="background:#888;">取消</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const GITHUB_USERNAME = 'wowidance-cloud';
     const INDEX_FILENAME = 'tkch-bulletin-index.json';
@@ -231,6 +294,9 @@
     /* ==========================================================================
        週報資料載入與卡片渲染
        ========================================================================== */
+    let cachedBulletins = [];
+
+    // 儲存全域已載入的週報清單以供 AI 小幫手檢索
     async function loadBulletins() {
       const loadingEl = document.getElementById('loading-state');
       const errorEl = document.getElementById('error-state');
@@ -265,6 +331,7 @@
 
         // 永遠依主日日期由新到舊排序，保證第一張卡片一定是最新一期
         bulletins.sort((a, b) => (b.date || b.publishedAt || '').localeCompare(a.date || a.publishedAt || ''));
+        cachedBulletins = bulletins;
 
         // Render cards
         loadingEl.style.display = 'none';
@@ -276,6 +343,296 @@
         loadingEl.style.display = 'none';
         errorEl.style.display = 'flex';
       }
+    }
+
+    /* ==========================================================================
+       功能三：AI 小幫手（混合雙軌模式：Gemini AI + 本地智慧搜尋備援）
+       ========================================================================== */
+    const chatWrapper = document.getElementById('ai-assistant-wrapper');
+    const chatBtn = document.getElementById('ai-float-btn');
+    const chatWindow = document.getElementById('ai-chat-window');
+    const closeBtn = document.getElementById('ai-close-btn');
+    const chatMessages = document.getElementById('ai-chat-messages');
+    const userInput = document.getElementById('ai-user-input');
+
+    if (chatBtn && chatWindow) {
+      chatBtn.addEventListener('click', () => {
+        const isHidden = chatWindow.style.display === 'none';
+        chatWindow.style.display = isHidden ? 'flex' : 'none';
+        if (isHidden) {
+          setTimeout(() => userInput.focus(), 150);
+        }
+      });
+    }
+
+    if (closeBtn && chatWindow) {
+      closeBtn.addEventListener('click', () => {
+        chatWindow.style.display = 'none';
+      });
+    }
+
+    function updateModeLabel() {
+      const lbl = document.getElementById('ai-mode-label');
+      if (!lbl) return;
+      const hasKey = !!getGeminiKey();
+      lbl.textContent = hasKey ? '✨ Gemini AI 模式' : '📚 本地搜尋模式';
+      lbl.style.color = hasKey ? '#4CAF50' : '#aaa';
+    }
+
+    // 更新模式標籤（開啟對話框時）
+    if (chatBtn) {
+      chatBtn.addEventListener('click', () => {
+        updateModeLabel();
+      });
+    }
+
+    function openKeyModal() {
+      const overlay = document.getElementById('ai-key-modal-overlay');
+      const input = document.getElementById('gemini-key-input');
+      if (!overlay || !input) return;
+      input.value = getGeminiKey();
+      overlay.style.display = 'flex';
+      setTimeout(() => input.focus(), 100);
+    }
+
+    function closeKeyModal(e) {
+      if (e && e.target !== document.getElementById('ai-key-modal-overlay')) return;
+      const overlay = document.getElementById('ai-key-modal-overlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+
+    function saveKeyModal() {
+      const input = document.getElementById('gemini-key-input');
+      if (!input) return;
+      const key = input.value.trim();
+      setGeminiKey(key);
+      document.getElementById('ai-key-modal-overlay').style.display = 'none';
+      updateModeLabel();
+      if (key) {
+        appendMessage('bot', '✅ Gemini API Key 已儲存！小幫手現在使用 <strong>Gemini AI 模式</strong>，可以為您進行智慧統整回答。');
+      } else {
+        appendMessage('bot', '🗑️ API Key 已清除，切換回本地搜尋模式。');
+      }
+    }
+
+    function clearKeyModal() {
+      const input = document.getElementById('gemini-key-input');
+      if (input) input.value = '';
+      setGeminiKey('');
+      document.getElementById('ai-key-modal-overlay').style.display = 'none';
+      updateModeLabel();
+      appendMessage('bot', '🗑️ API Key 已清除，切換回本地搜尋模式。');
+    }
+
+    function appendMessage(sender, htmlContent) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = `ai-msg ${sender === 'user' ? 'ai-msg-user' : 'ai-msg-bot'}`;
+      msgDiv.innerHTML = htmlContent;
+      chatMessages.appendChild(msgDiv);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      return msgDiv;
+    }
+
+    function askQuickPrompt(text) {
+      if (!text) return;
+      if (chatWindow && chatWindow.style.display === 'none') {
+        chatWindow.style.display = 'flex';
+      }
+      processUserQuery(text);
+    }
+
+    function handleUserSubmit(e) {
+      e.preventDefault();
+      const query = userInput.value.trim();
+      if (!query) return;
+      userInput.value = '';
+      processUserQuery(query);
+    }
+
+    const GEMINI_KEY_STORAGE = 'tkch-gemini-key';
+
+    function getGeminiKey() {
+      try { return localStorage.getItem(GEMINI_KEY_STORAGE) || ''; } catch(e) { return ''; }
+    }
+
+    function setGeminiKey(key) {
+      try { localStorage.setItem(GEMINI_KEY_STORAGE, key.trim()); } catch(e) {}
+    }
+
+    async function processUserQuery(query) {
+      appendMessage('user', escapeHTML(query));
+      const loadingMsg = appendMessage('bot', '<span class="ai-typing">小幫手正在查閱週報資料中... 🕊️</span>');
+
+      // 步驟 1 (方案 C 首選)：呼叫 Netlify Function 後端代理 (全體會友共用，Key 不外露)
+      try {
+        const res = await fetch('/.netlify/functions/ask-gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: query,
+            bulletins: cachedBulletins
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.answer) {
+            loadingMsg.innerHTML = formatBotAnswer(data.answer);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Netlify 後端代理暫時無法連線，嘗試其他管道：', err);
+      }
+
+      // 步驟 1.5：若有自訂 localStorage Key 亦可使用
+      const apiKey = getGeminiKey();
+      if (apiKey) {
+        try {
+          const bulletinContext = cachedBulletins.slice(0, 15).map(b =>
+            `【第${b.volume}卷第${b.issue}期 ${b.date}】${b.summary || b.title}`
+          ).join('\n');
+
+          const prompt = `你是德光長老教會週報 AI 小幫手，服務視力退化或習慣用聽的長者與會友。請依據下方【歷期週報摘要】，溫暖親切地以繁體中文回答問題。
+
+回答守則：語氣親切溫暖、簡明扼要，若找到相關紀錄請說明是哪一期。排除奉獻金額相關詢問。
+
+【歷期週報摘要】：
+${bulletinContext}
+
+會友的問題：「${query}」`;
+
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: { temperature: 0.3, maxOutputTokens: 512 }
+            })
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (answer) {
+              loadingMsg.innerHTML = formatBotAnswer(answer);
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+              return;
+            }
+          }
+        } catch (err) {
+          console.warn('Gemini 直接呼叫失敗：', err);
+        }
+      }
+
+      // 步驟 2：無縫降級至【本地智慧關鍵字搜尋備援】
+      performLocalSearchFallback(query, loadingMsg);
+    }
+
+    function performLocalSearchFallback(query, msgElement) {
+      const q = query.toLowerCase();
+      const results = [];
+
+      cachedBulletins.forEach(b => {
+        let score = 0;
+        const title = (b.title || '').toLowerCase();
+        const summary = (b.summary || '').toLowerCase();
+        const date = (b.date || '').toLowerCase();
+
+        // 關鍵字比對權重
+        if (title.includes(q)) score += 10;
+        if (summary.includes(q)) score += 8;
+        if (date.includes(q)) score += 6;
+
+        // 常見意圖比對與同義詞擴展
+        if (q.includes('最新') && b === cachedBulletins[0]) score += 20;
+        if ((q.includes('牧師') || q.includes('講道')) && (summary.includes('講道') || summary.includes('牧師') || summary.includes('主講'))) score += 12;
+        if (q.includes('代禱') || q.includes('禱告')) {
+          if (summary.includes('代禱') || summary.includes('消息') || summary.includes('推廣')) score += 12;
+          else score += 5; // 週報皆具備代禱與消息，依期數排序推薦
+        }
+        if (q.includes('活動') || q.includes('消息') || q.includes('讀經')) {
+          if (summary.includes('消息') || summary.includes('活動') || summary.includes('讀經') || summary.includes('講座')) score += 12;
+          else score += 4;
+        }
+        if (q.includes('經') && (summary.includes('經文') || summary.includes('約伯') || summary.includes('以賽亞'))) score += 15;
+
+        // 支援分詞比對（如：約伯記、野外禮拜、讀經）
+        const words = q.split(/\s+/).filter(w => w.length > 1);
+        words.forEach(w => {
+          if (title.includes(w) || summary.includes(w)) score += 4;
+        });
+
+        if (score > 0) {
+          results.push({ bulletin: b, score: score });
+        }
+      });
+
+      results.sort((a, b) => b.score - a.score);
+
+      if (results.length === 0) {
+        let reply = `您好！在目前歷期的摘要紀錄中，未找到直接提及「<strong>${escapeHTML(query)}</strong>」的活動。<br><br>🕊️ 為您推薦最新一期週報，您可以點開查看本週各團契消息：<br>`;
+        if (cachedBulletins.length > 0) {
+          reply += renderBulletinResultCard(cachedBulletins[0]);
+        }
+        msgElement.innerHTML = reply;
+      } else {
+        const best = results[0].bulletin;
+        const otherMatches = results.filter(r => r.bulletin !== best && r.bulletin.summary);
+
+        let summarySpeech = '';
+        if (best.summary) {
+          summarySpeech = `平安！根據第 <strong>${best.issue}</strong> 期（${best.date}）週報消息紀錄：<br><blockquote style="margin:6px 0;padding:6px 10px;background:#f1f5f9;border-left:3px solid #5850ec;font-size:0.85em;border-radius:4px;">${escapeHTML(best.summary)}</blockquote>`;
+        } else {
+          summarySpeech = `為您找到最相關的是第 <strong>${best.issue}</strong> 期（${best.date}）週報。<br>`;
+        }
+
+        let reply = `${summarySpeech}<div style="margin-top:6px;font-weight:600;font-size:0.85em;color:#475569;">👉 點擊下方可直接開啟該期詳細內容：</div>`;
+        reply += renderBulletinResultCard(best);
+
+        // 如果還有其他期數有摘要內容才列出，最多再補 1 期避免洗版
+        if (otherMatches.length > 0) {
+          reply += `<div style="margin-top:8px;font-size:0.8em;color:#64748b;">其他參考期數：</div>`;
+          reply += renderBulletinResultCard(otherMatches[0].bulletin);
+        }
+
+        msgElement.innerHTML = reply;
+      }
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function renderBulletinResultCard(b) {
+      const rawDate = b.date || b.publishedAt || '';
+      return `
+        <div class="ai-result-card">
+          <div class="ai-result-header">第 ${b.volume} 卷 第 ${b.issue} 期 · ${rawDate}</div>
+          <div class="ai-result-title">${escapeHTML(b.title)}</div>
+          ${b.summary ? `<div class="ai-result-summary">${escapeHTML(b.summary)}</div>` : ''}
+          <div class="ai-result-actions">
+            <a href="${b.url}" target="_blank" rel="noopener noreferrer" class="ai-card-btn">📖 打開閱讀</a>
+          </div>
+        </div>
+      `;
+    }
+
+    function formatBotAnswer(text) {
+      // 轉換換行與粗體標籤，增進長者閱讀體驗
+      let formatted = escapeHTML(text)
+        .replace(/\n\n/g, '<br><br>')
+        .replace(/\n/g, '<br>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      return formatted;
+    }
+
+    function escapeHTML(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     function renderCards(bulletins, container) {

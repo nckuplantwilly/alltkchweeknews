@@ -900,8 +900,10 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
   const volume    = parseInt(result.volume, 10) || 0;
   const issue     = parseInt(result.issue, 10) || 0;
   const title     = result.title || ('第 ' + volume + ' 卷第 ' + issue + ' 期');
+  const summary   = result.summary || '';
   Logger.log('       ✓ 辨識卷期：第 ' + volume + ' 卷第 ' + issue + ' 期');
   Logger.log('       ✓ 辨識主日：' + finalDate);
+  Logger.log('       ✓ 週報摘要：' + (summary ? summary.slice(0, 50) + (summary.length > 50 ? '…' : '') : '（未擷取到摘要）'));
 
   Logger.log('  [6/6] 上傳至 GitHub Gist（同一日期會覆蓋，不再開新 Gist）...');
   const gistFilename = 'tkch-bulletin-' + finalDate + '.html';
@@ -913,6 +915,7 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
     volume:      volume,
     issue:       issue,
     title:       title,
+    summary:     summary,
     url:         uploaded.previewUrl,
     date:        finalDate,
     publishedAt: finalDate + 'T00:00:00.000Z',
@@ -1066,8 +1069,13 @@ ${urlsContext}
 【規則 2】回傳格式
 ═══════════════════════════════
 你的回覆第一行必須是精確的 JSON 標頭，格式如下（不要加 markdown 標記）：
-META:{"volume":33,"issue":24,"date":"2026-09-27","title":"第 33 卷第 24 期"}
+META:{"volume":33,"issue":24,"date":"2026-09-27","title":"第 33 卷第 24 期","summary":"本週主日講道主題為「...」（經文：...），由...牧師/長老主講。教會消息包含：...等。"}
 （請從週報首頁印製的文字自動擷取：卷數 volume、期數 issue、主日西元日期 date）
+summary 欄位規範：
+- 限 100 字以內的繁體中文純文字（無 HTML 標記）
+- 必須包含：① 主日講道題目與經文 ② 主講者姓名 ③ 1～2 條重要教會消息
+- 排除所有奉獻相關內容
+- 此摘要供長者語音朗讀與搜尋使用，措辭須口語化、清晰易懂
 第二行開始輸出完整的 HTML 代碼（包含 <!DOCTYPE html>、<html>、<head>、<body> 等）。
 切勿在 HTML 頭尾加上 \`\`\`html 或 \`\`\` 符號。
 
@@ -1216,15 +1224,16 @@ function parseGeminiResponse(rawText, fallbackDateStr) {
   if (text.endsWith('```')) text = text.slice(0, -3);
   text = text.trim();
 
-  let volume = 0, issue = 0, date = fallbackDateStr, title = '';
+  let volume = 0, issue = 0, date = fallbackDateStr, title = '', summary = '';
   const metaMatch = text.match(/META:\s*(\{[\s\S]*?\})/);
   if (metaMatch) {
     try {
       const meta = JSON.parse(metaMatch[1]);
-      volume = meta.volume || 0;
-      issue  = meta.issue  || 0;
-      date   = meta.date   || fallbackDateStr;
-      title  = meta.title  || '';
+      volume  = meta.volume  || 0;
+      issue   = meta.issue   || 0;
+      date    = meta.date    || fallbackDateStr;
+      title   = meta.title   || '';
+      summary = meta.summary || '';
     } catch (e) {
       Logger.log('       ⚠️ META 解析異常');
     }
@@ -1242,7 +1251,7 @@ function parseGeminiResponse(rawText, fallbackDateStr) {
     if (lines[0] && lines[0].indexOf('META:') === 0) htmlStart = 1;
     html = lines.slice(htmlStart).join('\n').trim();
   }
-  return { html: html, volume: volume, issue: issue, date: date, title: title };
+  return { html: html, volume: volume, issue: issue, date: date, title: title, summary: summary };
 }
 
 function extractDateFromFilename(filename) {
@@ -2010,6 +2019,7 @@ function finalizeBulletinHtml(html, resolvedUrls) {
   out = injectKnownMetaButtons(out);
   out = normalizeFooterLinks(out);
   out = stripOfferingLinks(out, resolvedUrls);
+  out = injectAccessibilityAndTTS(out);
   out = repairTruncatedHtml(out);
   return out;
 }
@@ -2282,3 +2292,332 @@ function repairTruncatedHtml(html) {
   if (!/<\/html>/i.test(out)) out += '\n</html>';
   return out;
 }
+
+/**
+ * ★ 為每篇週報 HTML 自動注入無障礙字體縮放與語音朗讀 (TTS) 功能
+ */
+function injectAccessibilityAndTTS(html) {
+  let out = String(html || '');
+  // 清理可能已經存在的舊版注入標記，確保修復時能重新套用最新樣式與位置
+  out = out.replace(/<style\s+id=["']tkch-a11y-styles["']>[\s\S]*?<\/style>/gi, '');
+  out = out.replace(/<div\s+class=["']tkch-a11y-bar["']\s+id=["']tkch-a11y-toolbar["'][\s\S]*?<\/div>/gi, '');
+  out = out.replace(/<script\s+id=["']tkch-a11y-script["']>[\s\S]*?<\/script>/gi, '');
+
+  const a11yStyle = `
+<style id="tkch-a11y-styles">
+  :root {
+    --font-scale: 1.0;
+  }
+  html, body {
+    display: block !important;
+  }
+  body {
+    font-size: calc(1rem * var(--font-scale)) !important;
+    padding: 12px !important;
+    margin: 0 auto !important;
+  }
+  .container, main {
+    display: block !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    max-width: 650px !important;
+    width: 100% !important;
+  }
+  p, li, div, td, th, blockquote, summary {
+    font-size: calc(1em * var(--font-scale));
+  }
+  h1 { font-size: calc(1.8rem * var(--font-scale)) !important; }
+  h2 { font-size: calc(1.4rem * var(--font-scale)) !important; }
+  h3 { font-size: calc(1.2rem * var(--font-scale)) !important; }
+  .tkch-a11y-bar {
+    position: sticky;
+    top: 10px;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1.5px solid #5850ec;
+    border-radius: 30px;
+    padding: 6px 16px;
+    margin: 10px auto 16px;
+    box-shadow: 0 4px 16px rgba(88, 80, 236, 0.15);
+    max-width: 95%;
+    width: fit-content;
+  }
+  .tkch-a11y-label {
+    font-size: 14px;
+    font-weight: bold;
+    color: #1e293b;
+    user-select: none;
+  }
+  .tkch-btn {
+    border: 1px solid #cbd5e1;
+    background: #ffffff;
+    color: #1e293b;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .tkch-btn:hover {
+    border-color: #5850ec;
+    color: #5850ec;
+  }
+  .tkch-btn.active {
+    background: #5850ec;
+    color: #ffffff;
+    border-color: #5850ec;
+  }
+  .tkch-btn-tts {
+    background: #eff6ff;
+    border-color: #3b82f6;
+    color: #1d4ed8;
+    border-radius: 20px;
+    padding: 4px 14px;
+  }
+  .tkch-btn-tts.playing {
+    background: #fff7ed;
+    border-color: #ea580c;
+    color: #ea580c;
+  }
+  .section-tts-btn {
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    color: #334155;
+    border-radius: 14px;
+    padding: 2px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  .section-tts-btn.playing {
+    background: #fff7ed;
+    border-color: #ea580c;
+    color: #ea580c;
+  }
+</style>
+`;
+
+  const a11yToolbar = `
+  <div class="tkch-a11y-bar" id="tkch-a11y-toolbar" role="toolbar" aria-label="無障礙輔助工具">
+    <span class="tkch-a11y-label">字體：</span>
+    <button type="button" class="tkch-btn" onclick="adjustWeeklyFont(-0.1)" title="縮小字體">A-</button>
+    <button type="button" class="tkch-btn active" id="btn-font-reset" onclick="adjustWeeklyFont(0)" title="標準字體">A</button>
+    <button type="button" class="tkch-btn" onclick="adjustWeeklyFont(0.1)" title="放大字體">A+</button>
+    <span style="color:#cbd5e1;margin:0 2px;">|</span>
+    <button type="button" class="tkch-btn tkch-btn-tts" id="btn-read-all" onclick="toggleReadAll()">🔊 語音朗讀整篇</button>
+  </div>
+`;
+
+  const a11yScript = `
+<script id="tkch-a11y-script">
+  let weeklyFontScale = 1.0;
+  const FONT_KEY = 'tkch-font-scale';
+
+  function initWeeklyFont() {
+    try {
+      const saved = localStorage.getItem(FONT_KEY);
+      if (saved) {
+        const val = parseFloat(saved);
+        if (!isNaN(val) && val >= 0.85 && val <= 1.5) weeklyFontScale = val;
+      }
+    } catch(e) {}
+    applyWeeklyFont();
+  }
+
+  function adjustWeeklyFont(delta) {
+    if (delta === 0) weeklyFontScale = 1.0;
+    else {
+      weeklyFontScale = Math.round((weeklyFontScale + delta) * 10) / 10;
+      if (weeklyFontScale < 0.85) weeklyFontScale = 0.85;
+      if (weeklyFontScale > 1.5) weeklyFontScale = 1.5;
+    }
+    try { localStorage.setItem(FONT_KEY, weeklyFontScale.toString()); } catch(e) {}
+    applyWeeklyFont();
+  }
+
+  function applyWeeklyFont() {
+    document.documentElement.style.setProperty('--font-scale', weeklyFontScale);
+    const rBtn = document.getElementById('btn-font-reset');
+    if (rBtn) {
+      if (Math.abs(weeklyFontScale - 1.0) < 0.01) rBtn.classList.add('active');
+      else rBtn.classList.remove('active');
+    }
+  }
+
+  // === 語音朗讀 TTS ===
+  let isSpeakingAll = false;
+  let currentUtterance = null;
+
+  function stopAllSpeech() {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    isSpeakingAll = false;
+    currentUtterance = null;
+    const btnAll = document.getElementById('btn-read-all');
+    if (btnAll) {
+      btnAll.textContent = '🔊 語音朗讀整篇';
+      btnAll.classList.remove('playing');
+    }
+    document.querySelectorAll('.section-tts-btn').forEach(b => {
+      b.textContent = '🔊 朗讀';
+      b.classList.remove('playing');
+    });
+  }
+
+  function toggleReadAll() {
+    if (!('speechSynthesis' in window)) {
+      alert('您的瀏覽器不支援語音朗讀功能');
+      return;
+    }
+    const synth = window.speechSynthesis;
+    const btnAll = document.getElementById('btn-read-all');
+
+    if (isSpeakingAll) {
+      if (synth.speaking) {
+        if (synth.paused) {
+          synth.resume();
+          btnAll.textContent = '⏸ 暫停朗讀';
+          btnAll.classList.add('playing');
+        } else {
+          synth.pause();
+          btnAll.textContent = '▶ 繼續朗讀';
+          btnAll.classList.remove('playing');
+        }
+        return;
+      }
+    }
+
+    stopAllSpeech();
+
+    // 展開所有 details 以便長者查看，並收集文字
+    document.querySelectorAll('details').forEach(d => d.open = true);
+
+    // 擷取主要內容文字（排除工具列、footer 連結）
+    const clone = document.body.cloneNode(true);
+    const tb = clone.querySelector('#tkch-a11y-toolbar');
+    if (tb) tb.remove();
+    const ft = clone.querySelector('footer');
+    if (ft) ft.remove();
+    const st = clone.querySelectorAll('style, script');
+    st.forEach(s => s.remove());
+
+    const textToRead = clone.innerText.replace(/\\s+/g, ' ').trim();
+    if (!textToRead) return;
+
+    isSpeakingAll = true;
+    btnAll.textContent = '⏸ 暫停朗讀';
+    btnAll.classList.add('playing');
+
+    const utter = new SpeechSynthesisUtterance(textToRead);
+    utter.lang = 'zh-TW';
+    utter.rate = 0.85; // 稍慢，適合長者
+    utter.onend = () => stopAllSpeech();
+    utter.onerror = () => stopAllSpeech();
+    currentUtterance = utter;
+    synth.speak(utter);
+  }
+
+  function readSection(summaryEl, btn) {
+    if (!('speechSynthesis' in window)) return;
+    const synth = window.speechSynthesis;
+    const details = summaryEl.closest('details');
+
+    if (btn.classList.contains('playing')) {
+      stopAllSpeech();
+      return;
+    }
+
+    stopAllSpeech();
+
+    if (details) details.open = true;
+
+    // 取得該區塊文字
+    const clone = (details || summaryEl).cloneNode(true);
+    clone.querySelectorAll('.section-tts-btn, style, script').forEach(el => el.remove());
+    const text = clone.innerText.replace(/\\s+/g, ' ').trim();
+
+    btn.textContent = '⏹ 停止';
+    btn.classList.add('playing');
+
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.lang = 'zh-TW';
+    utter.rate = 0.85;
+    utter.onend = () => {
+      btn.textContent = '🔊 朗讀';
+      btn.classList.remove('playing');
+    };
+    utter.onerror = () => {
+      btn.textContent = '🔊 朗讀';
+      btn.classList.remove('playing');
+    };
+    synth.speak(utter);
+  }
+
+  // 為每一個 details > summary 自動添加小喇叭按鈕
+  function attachSectionTTS() {
+    if (!('speechSynthesis' in window)) return;
+    document.querySelectorAll('details > summary').forEach(sum => {
+      if (sum.querySelector('.section-tts-btn')) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'section-tts-btn';
+      btn.textContent = '🔊 朗讀';
+      btn.setAttribute('aria-label', '朗讀本區塊');
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        readSection(sum, btn);
+      });
+      sum.appendChild(btn);
+    });
+  }
+
+  window.addEventListener('beforeunload', stopAllSpeech);
+  document.addEventListener('DOMContentLoaded', () => {
+    initWeeklyFont();
+    attachSectionTTS();
+  });
+  // 若 DOM 已載入
+  if (document.readyState === 'interactive' || document.readyState === 'complete') {
+    initWeeklyFont();
+    attachSectionTTS();
+  }
+</script>
+`;
+
+  // 1. 注入 CSS 至 </head> 前
+  if (/<\/head>/i.test(out)) {
+    out = out.replace(/<\/head>/i, a11yStyle + '\n</head>');
+  } else {
+    out = a11yStyle + '\n' + out;
+  }
+
+  // 2. 注入工具列：優先放入 .container 開頭，避免與外層 flex 容器產生並排衝突
+  if (/<div\b[^>]*class=["'][^"']*\bcontainer\b[^"']*["'][^>]*>/i.test(out)) {
+    out = out.replace(/(<div\b[^>]*class=["'][^"']*\bcontainer\b[^"']*["'][^>]*>)/i, '$1\n' + a11yToolbar);
+  } else if (/<body[^>]*>/i.test(out)) {
+    out = out.replace(/(<body[^>]*>)/i, '$1\n' + a11yToolbar);
+  } else {
+    out = a11yToolbar + '\n' + out;
+  }
+
+  // 3. 注入 JS 至 </body> 前
+  if (/<\/body>/i.test(out)) {
+    out = out.replace(/<\/body>/i, a11yScript + '\n</body>');
+  } else {
+    out = out + '\n' + a11yScript;
+  }
+
+  return out;
+}
+
