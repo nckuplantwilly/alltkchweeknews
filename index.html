@@ -486,11 +486,12 @@
           const resp = await fetch(rawUrl, { cache: 'no-store' });
           if (!resp.ok) return;
           const html = await resp.text();
-          // 去除 HTML 標籤，只留純文字
+          // 去除 <style> 與 <script> 標籤
+          const cleanedHtml = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
           const div = document.createElement('div');
-          div.innerHTML = html;
+          div.innerHTML = cleanedHtml;
           const text = (div.innerText || div.textContent || '').replace(/\s+/g, ' ').trim();
-          if (text) fullTexts[b.date] = text;
+          if (text) fullTexts[b.date] = text.slice(0, 15000);
         } catch (e) { /* 靜默忽略單篇失敗 */ }
       }));
 
@@ -676,8 +677,16 @@ ${bulletinContext}
     }
 
     function formatBotAnswer(text) {
+      // 先處理 Markdown 連結 [文字](網址)
+      let formatted = escapeHTML(text);
+
+      // 還原並轉為可點擊超連結 <a>
+      formatted = formatted.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:#5850ec;font-weight:600;text-decoration:underline;">$1</a>');
+      // 將剩下的裸網址也轉成超連結
+      formatted = formatted.replace(/(^|[^">])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer" style="color:#5850ec;font-weight:600;text-decoration:underline;">$2</a>');
+
       // 轉換換行、清單與粗體標籤，增進長者閱讀體驗
-      let formatted = escapeHTML(text)
+      formatted = formatted
         .replace(/\n\n/g, '<br><br>')
         .replace(/\n\s*[*•-]\s+/g, '<br>• ')
         .replace(/\n/g, '<br>')
