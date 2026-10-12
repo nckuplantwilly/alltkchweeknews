@@ -39,7 +39,27 @@ exports.handler = async function (event, context) {
     };
 
     // 全文檢索補充：接收前端預取的近期完整週報純文字（去 HTML tag 後）
-    const fullTexts = payload.fullTexts || {}; // { "2026-10-11": "純文字...", ... }
+    let fullTexts = payload.fullTexts || {};
+
+    // 防禦機制：若前端因瀏覽器相容性（如 IE/Edge 舊模式）未傳送 fullTexts，後端自動替補抓取最新一期週報
+    if (Object.keys(fullTexts).length === 0 && bulletins.length > 0 && bulletins[0].url) {
+      try {
+        const rawUrl = bulletins[0].url.replace('https://htmlpreview.github.io/?', '');
+        const autoRes = await fetch(rawUrl);
+        if (autoRes.ok) {
+          const autoHtml = await autoRes.text();
+          const cleanText = autoHtml
+            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (cleanText) {
+            fullTexts[bulletins[0].date] = cleanText.slice(0, 15000);
+          }
+        }
+      } catch (e) { /* 靜默忽略 */ }
+    }
 
     // 將現有的週報摘要整理成簡明上下文
     const bulletinContext = bulletins.slice(0, 15).map((b, i) => {
