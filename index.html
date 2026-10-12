@@ -585,41 +585,84 @@ ${bulletinContext}`;
       const apiKey = getGeminiKey();
       if (apiKey) {
         try {
-          const bulletinContext = cachedBulletins.slice(0, 15).map(b =>
-            `【第${b.volume}卷第${b.issue}期 ${b.date}】${b.summary || b.title}`
-          ).join('\n');
+          const eventForms = {
+            '2026-10-04': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '慕道班報名表'],
+            '2026-10-11': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '2026德光教會「閱讀・以賽亞」講座', '2027年全年讀經靈修書籍代訂購']
+          };
 
-          const prompt = `你是德光長老教會週報 AI 小幫手，服務視力退化或習慣用聽的長者與會友。請依據下方【歷期週報摘要】，溫暖親切地以繁體中文回答問題。
+          const bulletinContext = cachedBulletins.slice(0, 15).map(b => {
+            const extraEvents = eventForms[b.date] ? `，本週活動報名：${eventForms[b.date].join('、')}` : '';
+            const fullText = fullTexts[b.date] ? `\n  【本期完整內文】：${fullTexts[b.date].slice(0, 10000)}` : '';
+            return `【期數 ${b.volume} 卷 ${b.issue} 期】主日日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，週報閱讀網址：${b.url}${fullText}`;
+          }).join('\n\n');
 
-回答守則：語氣親切溫暖、簡明扼要，若找到相關紀錄請說明是哪一期。排除奉獻金額相關詢問。
+          const systemPrompt = `你是一位熱心、親切且溫暖的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
+請依據下方提供的【歷期週報資料】來回答會友的詢問。
+回答守則：
+1. 語氣溫暖親切、尊重大方，使用繁體中文。
+2. 請仔細檢閱每期週報的【摘要】、【本週活動與報名表】以及【本期完整內文】（包含事奉輪值表、同工名單、聚會消息等）。
+3. 若會友詢問某位兄姊的服事（如司會、值週執事、司琴、音控、招待等），請在完整內文中的事奉輪值表中仔細查找，明確回報該兄姊在第幾期、哪一天擔任什麼服事職務。
+4. 提供連結時，請一律使用 Markdown 超連結語法（例如：[點此閱讀第 41 期週報](網址) 或 [點此填寫報名表](網址)），切勿直接貼出一整串落落長的原始網址，以方便長者直接點擊。
+5. 盡量條理分明、簡明扼要，方便長者閱讀或聆聽。
+6. 若資料中確實完全未提及或找不到相關紀錄，請誠懇告知並簡要列出最近一兩期的主題供會友參考。
+7. 排除所有奉獻金額與明細相關的詢問。
 
-【歷期週報摘要】：
-${bulletinContext}
+【歷期週報資料】：
+${bulletinContext}`;
 
-會友的問題：「${query}」`;
+          // 若以 gsk_ 開頭，走 Groq API；否則走 Gemini API
+          if (apiKey.startsWith('gsk_')) {
+            const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${apiKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: 'qwen/qwen3.8-27b',
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: query }
+                ],
+                temperature: 0.2,
+                max_tokens: 2048
+              })
+            });
 
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
-          const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ role: 'user', parts: [{ text: prompt }] }],
-              generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }
-            })
-          });
+            if (groqRes.ok) {
+              const gData = await groqRes.json();
+              const ans = gData.choices?.[0]?.message?.content;
+              if (ans) {
+                updateModeLabel('cloud');
+                loadingMsg.innerHTML = formatBotAnswer(ans);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                return;
+              }
+            }
+          } else {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`;
+            const res = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n會友的問題：「${query}」` }] }],
+                generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }
+              })
+            });
 
-          if (res.ok) {
-            const data = await res.json();
-            const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (answer) {
-              updateModeLabel('cloud');
-              loadingMsg.innerHTML = formatBotAnswer(answer);
-              chatMessages.scrollTop = chatMessages.scrollHeight;
-              return;
+            if (res.ok) {
+              const data = await res.json();
+              const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+              if (answer) {
+                updateModeLabel('cloud');
+                loadingMsg.innerHTML = formatBotAnswer(answer);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                return;
+              }
             }
           }
         } catch (err) {
-          console.warn('Gemini 直接呼叫失敗：', err);
+          console.warn('自訂 API 呼叫失敗：', err);
         }
       }
 
