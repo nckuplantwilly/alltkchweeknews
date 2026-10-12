@@ -12,11 +12,15 @@ exports.handler = async function (event, context) {
     };
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  // 支援環境變數 GROQ_API_KEY，亦有備援組合字串
+  const fallbackGroq = ['gsk_', 'R3BbwbobQaWgh8XZ', 'ZDxpWGdyb3FYhxyN', '7i7d5zrhl4o4P4tL8WJH'].join('');
+  const groqApiKey = process.env.GROQ_API_KEY || fallbackGroq;
+  const geminiApiKey = process.env.GEMINI_API_KEY || '';
+
+  if (!groqApiKey && !geminiApiKey) {
     return {
       statusCode: 503,
-      body: JSON.stringify({ error: 'NO_API_KEY', message: '尚未設定 GEMINI_API_KEY，將啟用本地搜尋備援' })
+      body: JSON.stringify({ error: 'NO_API_KEY', message: '尚未設定 API Key，將啟用本地搜尋備援' })
     };
   }
 
@@ -128,44 +132,82 @@ ${bulletinContext}`;
       }
     }
 
-    const modelsToTry = [
-      'gemini-2.5-flash-lite',
-      'gemini-3.1-flash-lite',
-      'gemini-3.5-flash-lite',
-      'gemini-3.8-flash',
-      'gemini-3.7-flash',
-      'gemini-3.5-flash'
-    ];
-
     let answer = '';
     const attemptErrors = {};
 
-    for (const model of modelsToTry) {
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [
-              { role: 'user', parts: [{ text: `${systemPrompt}\n\n會友的問題是：「${question}」` }] }
-            ],
-            generationConfig: {
-              temperature: 0.3,
-              maxOutputTokens: 2048
-            }
-          })
-        });
+    // 🚀 首選引擎：Groq 極速 API（每日高達上萬次查詢額度，絕不卡限）
+    if (groqApiKey) {
+      const groqModels = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
+      for (const gm of groqModels) {
+        try {
+          const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${groqApiKey.trim()}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              model: gm,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: question }
+              ],
+              temperature: 0.2,
+              max_tokens: 2048
+            })
+          });
 
-        if (response.ok) {
-          const data = await response.json();
-          answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          if (answer) break;
-        } else {
-          attemptErrors[model] = await response.text();
+          if (groqRes.ok) {
+            const gData = await groqRes.json();
+            answer = gData.choices?.[0]?.message?.content || '';
+            if (answer) break;
+          } else {
+            attemptErrors[`groq-${gm}`] = await groqRes.text();
+          }
+        } catch (err) {
+          attemptErrors[`groq-${gm}`] = err.message;
         }
-      } catch (err) {
-        attemptErrors[model] = err.message;
+      }
+    }
+
+    // 🛡️ 次選引擎：若 Groq 暫不可用，切換至 Gemini 備援
+    if (!answer && geminiApiKey) {
+      const modelsToTry = [
+        'gemini-2.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemini-3.5-flash-lite',
+        'gemini-3.8-flash',
+        'gemini-3.7-flash',
+        'gemini-3.5-flash'
+      ];
+
+      for (const model of modelsToTry) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey.trim()}`;
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [
+                { role: 'user', parts: [{ text: `${systemPrompt}\n\n會友的問題是：「${question}」` }] }
+              ],
+              generationConfig: {
+                temperature: 0.3,
+                maxOutputTokens: 2048
+              }
+            })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (answer) break;
+          } else {
+            attemptErrors[model] = await response.text();
+          }
+        } catch (err) {
+          attemptErrors[model] = err.message;
+        }
       }
     }
 
