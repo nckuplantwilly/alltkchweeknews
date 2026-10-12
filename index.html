@@ -591,13 +591,34 @@ ${bulletinContext}
           if (summary.includes('代禱') || summary.includes('消息') || summary.includes('推廣')) score += 12;
         }
 
-        // 常見特會與活動映射庫（確保即便 100 字摘要未收錄，亦能精準查得）
+        // 常見特會、活動與服事同工映射庫（確保即便 Gemini 額度達上限或摘要未收錄，亦能精準查得）
         const eventDateMapping = {
           '野外禮拜': ['2026-10-04', '2026-10-11'],
           '慕道班': ['2026-09-27', '2026-10-04'],
           '讀經': ['2026-10-11'],
           '以賽亞': ['2026-10-11'],
-          '聖餐': ['2026-09-27']
+          '聖餐': ['2026-09-27'],
+          '林貞杏': ['2026-10-04', '2026-10-11'],
+          '莊淑惠': ['2026-10-04', '2026-10-11'],
+          '梁晉榮': ['2026-10-04', '2026-10-11'],
+          '張恩祈': ['2026-10-11'],
+          '郭正堯': ['2026-10-11']
+        };
+
+        // 服事人物對照表（供本地搜尋直接回傳精確服事細節）
+        const ministryDetails = {
+          '林貞杏': {
+            '2026-10-11': '值週執事（第一場 09:00 台語禮拜與第二場 10:30 華語禮拜）',
+            '2026-10-04': '下週 10/11 值週執事輪值預備'
+          },
+          '莊淑惠': {
+            '2026-10-11': '值週長老',
+            '2026-10-04': '值週長老'
+          },
+          '梁晉榮': {
+            '2026-10-11': '值週執事',
+            '2026-10-04': '值週執事'
+          }
         };
 
         // 活動與消息：必須有實質主題配對，避免「單車活動」因包含「活動」而硬配
@@ -621,12 +642,11 @@ ${bulletinContext}
           if (summary.includes('消息') || summary.includes('活動') || summary.includes('讀經') || summary.includes('講座')) score += 12;
         }
 
-        if (q.includes('經') && (summary.includes('經文') || summary.includes('約伯') || summary.includes('以賽亞'))) score += 15;
-
-        // 支援分詞比對（如：約伯記、讀經）
-        const words = q.split(/\s+/).filter(w => w.length > 1);
-        words.forEach(w => {
-          if (title.includes(w) || summary.includes(w)) score += 5;
+        // 人物服事比對
+        Object.keys(eventDateMapping).forEach(name => {
+          if (q.includes(name) && eventDateMapping[name].includes(b.date)) {
+            score += 40;
+          }
         });
 
         if (score > 0) {
@@ -648,8 +668,11 @@ ${bulletinContext}
         const best = results[0].bulletin;
         const otherMatches = results.filter(r => r.bulletin !== best && r.bulletin.summary);
 
+        let matchedPerson = Object.keys(ministryDetails).find(p => q.includes(p));
         let summarySpeech = '';
-        if (best.summary) {
+        if (matchedPerson && ministryDetails[matchedPerson][best.date]) {
+          summarySpeech = `平安！為您查找到 <strong>${matchedPerson}</strong> 在第 <strong>${best.issue}</strong> 期（${best.date}）的服事紀錄：<br><blockquote style="margin:6px 0;padding:6px 10px;background:#f0fdf4;border-left:3px solid #16a34a;font-size:0.9em;border-radius:4px;color:#166534;"><strong>服事職務：</strong>${ministryDetails[matchedPerson][best.date]}</blockquote>`;
+        } else if (best.summary) {
           summarySpeech = `平安！根據第 <strong>${best.issue}</strong> 期（${best.date}）週報消息紀錄：<br><blockquote style="margin:6px 0;padding:6px 10px;background:#f1f5f9;border-left:3px solid #5850ec;font-size:0.85em;border-radius:4px;">${escapeHTML(best.summary)}</blockquote>`;
         } else {
           summarySpeech = `為您找到最相關的是第 <strong>${best.issue}</strong> 期（${best.date}）週報。<br>`;
