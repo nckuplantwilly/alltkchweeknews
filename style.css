@@ -460,7 +460,7 @@ body {
 .ai-assistant-wrapper {
   position: fixed;
   right: 24px;
-  bottom: 24px;
+  top: 24px;
   z-index: 10000;
 }
 
@@ -496,15 +496,15 @@ body {
   font-size: 1.25rem;
 }
 
-/* 聊天視窗主體 */
+/* 聊天視窗主體 - 向下展開 */
 .ai-chat-window {
   position: absolute;
   right: 0;
-  bottom: 64px;
+  top: 60px;
   width: 360px;
   max-width: calc(100vw - 32px);
   height: 520px;
-  max-height: calc(100vh - 100px);
+  max-height: calc(100vh - 90px);
   background: #ffffff;
   border-radius: 20px;
   border: 1px solid var(--border);
@@ -512,7 +512,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: fadeInUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: fadeInDown 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 /* 頂部 Header */
@@ -730,16 +730,17 @@ body {
 /* 手機版適配 */
 @media (max-width: 640px) {
   .ai-assistant-wrapper {
-    right: 16px;
-    bottom: 16px;
+    right: 14px;
+    top: 14px;
   }
   .ai-float-btn {
-    padding: 10px 16px;
+    padding: 9px 14px;
+    font-size: 0.85rem;
   }
   .ai-chat-window {
-    width: calc(100vw - 32px);
+    width: calc(100vw - 28px);
     right: 0;
-    bottom: 56px;
+    top: 50px;
     height: 480px;
   }
 }
