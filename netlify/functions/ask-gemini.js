@@ -38,10 +38,16 @@ exports.handler = async function (event, context) {
       '2026-10-11': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '2026德光教會「閱讀・以賽亞」講座', '2027年全年讀經靈修書籍代訂購']
     };
 
+    // 全文檢索補充：接收前端預取的近期完整週報純文字（去 HTML tag 後）
+    const fullTexts = payload.fullTexts || {}; // { "2026-10-11": "純文字...", ... }
+
     // 將現有的週報摘要整理成簡明上下文
     const bulletinContext = bulletins.slice(0, 15).map((b, i) => {
       const extraEvents = eventForms[b.date] ? `，本週活動報名：${eventForms[b.date].join('、')}` : '';
-      return `【期數 ${b.volume} 卷 ${b.issue} 期】主日日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}`;
+      const fullText = fullTexts[b.date]
+        ? `\n  【完整週報內文節錄】：${fullTexts[b.date].slice(0, 1200)}`
+        : '';
+      return `【期數 ${b.volume} 卷 ${b.issue} 期】主日日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}${fullText}`;
     }).join('\n\n');
 
     const systemPrompt = `你是一位熱心、親切且溫暖的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
@@ -78,7 +84,7 @@ ${bulletinContext}`;
             ],
             generationConfig: {
               temperature: 0.3,
-              maxOutputTokens: 1024
+              maxOutputTokens: 2048
             }
           })
         });

@@ -475,12 +475,32 @@
 
       // 步驟 1 (方案 C 首選)：呼叫 Netlify Function 後端代理 (全體會友共用，Key 不外露)
       try {
-        const res = await fetch('/.netlify/functions/ask-gemini', {
+        // 預取最新 3 期完整週報 HTML 純文字（全文檢索）
+      const fullTexts = {};
+      const recentBulletins = cachedBulletins.slice(0, 3);
+      await Promise.all(recentBulletins.map(async (b) => {
+        if (!b.url) return;
+        try {
+          // 取得原始 Gist HTML（繞過 htmlpreview.github.io，直接用 raw URL）
+          const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
+          const resp = await fetch(rawUrl, { cache: 'no-store' });
+          if (!resp.ok) return;
+          const html = await resp.text();
+          // 去除 HTML 標籤，只留純文字
+          const div = document.createElement('div');
+          div.innerHTML = html;
+          const text = (div.innerText || div.textContent || '').replace(/\s+/g, ' ').trim();
+          if (text) fullTexts[b.date] = text;
+        } catch (e) { /* 靜默忽略單篇失敗 */ }
+      }));
+
+      const res = await fetch('/.netlify/functions/ask-gemini', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question: query,
-            bulletins: cachedBulletins
+            bulletins: cachedBulletins,
+            fullTexts: fullTexts
           })
         });
 
