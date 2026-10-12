@@ -65,15 +65,34 @@ exports.handler = async function (event, context) {
 【歷期週報資料】：
 ${bulletinContext}`;
 
+    // 診斷端點：若 question 為 debug_list_models 則直接列出可用的模型
+    if (question === 'debug_list_models') {
+      try {
+        const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey.trim()}`);
+        const listData = await listRes.json();
+        return {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ availableModels: (listData.models || []).map(m => m.name) })
+        };
+      } catch (err) {
+        return {
+          statusCode: 500,
+          body: JSON.stringify({ error: 'LIST_MODELS_FAILED', message: err.message })
+        };
+      }
+    }
+
     const modelsToTry = [
-      'gemini-3.8-flash',
       'gemini-2.5-flash',
-      'gemini-flash-latest',
-      'gemini-1.5-flash-latest'
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-flash-8b',
+      'gemini-1.5-pro'
     ];
 
     let answer = '';
-    let lastError = null;
+    const attemptErrors = {};
 
     for (const model of modelsToTry) {
       try {
@@ -97,17 +116,17 @@ ${bulletinContext}`;
           answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
           if (answer) break;
         } else {
-          lastError = await response.text();
+          attemptErrors[model] = await response.text();
         }
       } catch (err) {
-        lastError = err.message;
+        attemptErrors[model] = err.message;
       }
     }
 
     if (!answer) {
       return {
         statusCode: 502,
-        body: JSON.stringify({ error: 'GEMINI_API_ERROR', details: lastError })
+        body: JSON.stringify({ error: 'GEMINI_API_ERROR', details: attemptErrors })
       };
     }
 
