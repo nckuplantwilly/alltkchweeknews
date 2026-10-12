@@ -656,9 +656,10 @@ ${bulletinContext}
     }
 
     function formatBotAnswer(text) {
-      // 轉換換行與粗體標籤，增進長者閱讀體驗
+      // 轉換換行、清單與粗體標籤，增進長者閱讀體驗
       let formatted = escapeHTML(text)
         .replace(/\n\n/g, '<br><br>')
+        .replace(/\n\s*[*•-]\s+/g, '<br>• ')
         .replace(/\n/g, '<br>')
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
       return formatted;
