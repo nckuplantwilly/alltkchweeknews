@@ -551,18 +551,35 @@ ${bulletinContext}
         if ((q.includes('牧師') || q.includes('講道')) && (summary.includes('講道') || summary.includes('牧師') || summary.includes('主講'))) score += 12;
         if (q.includes('代禱') || q.includes('禱告')) {
           if (summary.includes('代禱') || summary.includes('消息') || summary.includes('推廣')) score += 12;
-          else score += 5; // 週報皆具備代禱與消息，依期數排序推薦
         }
-        if (q.includes('活動') || q.includes('消息') || q.includes('讀經')) {
+
+        // 活動與消息：必須有實質主題配對，避免「單車活動」因包含「活動」而硬配
+        const specificKeywords = ['單車', '自行車', '退修會', '野外禮拜', '受洗', '培靈', '愛餐', '洗禮', '聖誕', '復活節', '營會'];
+        let hasSpecificKeyword = false;
+        let matchedSpecificKeyword = false;
+        specificKeywords.forEach(k => {
+          if (q.includes(k)) {
+            hasSpecificKeyword = true;
+            if (title.includes(k) || summary.includes(k)) {
+              matchedSpecificKeyword = true;
+              score += 25;
+            }
+          }
+        });
+
+        // 如果問了特定活動關鍵字（如單車），但摘要中完全沒有該關鍵字，則直接不計分
+        if (hasSpecificKeyword && !matchedSpecificKeyword) {
+          score = 0;
+        } else if (!hasSpecificKeyword && (q.includes('活動') || q.includes('消息') || q.includes('讀經'))) {
           if (summary.includes('消息') || summary.includes('活動') || summary.includes('讀經') || summary.includes('講座')) score += 12;
-          else score += 4;
         }
+
         if (q.includes('經') && (summary.includes('經文') || summary.includes('約伯') || summary.includes('以賽亞'))) score += 15;
 
-        // 支援分詞比對（如：約伯記、野外禮拜、讀經）
+        // 支援分詞比對（如：約伯記、讀經）
         const words = q.split(/\s+/).filter(w => w.length > 1);
         words.forEach(w => {
-          if (title.includes(w) || summary.includes(w)) score += 4;
+          if (title.includes(w) || summary.includes(w)) score += 5;
         });
 
         if (score > 0) {
@@ -573,11 +590,14 @@ ${bulletinContext}
       results.sort((a, b) => b.score - a.score);
 
       if (results.length === 0) {
-        let reply = `您好！在目前歷期的摘要紀錄中，未找到直接提及「<strong>${escapeHTML(query)}</strong>」的活動。<br><br>🕊️ 為您推薦最新一期週報，您可以點開查看本週各團契消息：<br>`;
+        let reply = `平安！在目前現有的週報紀錄中，未找到與「<strong>${escapeHTML(query)}</strong>」相關的活動消息。<br><br>💡 您可以詢問：「<strong>最新一期週報</strong>」、「<strong>羅牧師講道</strong>」或「<strong>讀經活動</strong>」，或點擊下方查看最新週報：<br>`;
         if (cachedBulletins.length > 0) {
           reply += renderBulletinResultCard(cachedBulletins[0]);
         }
         msgElement.innerHTML = reply;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        return;
+      }
       } else {
         const best = results[0].bulletin;
         const otherMatches = results.filter(r => r.bulletin !== best && r.bulletin.summary);
