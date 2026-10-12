@@ -50,32 +50,50 @@ exports.handler = async function (event, context) {
 【歷期週報資料】：
 ${bulletinContext}`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey.trim()}`;
+    const modelsToTry = [
+      'gemini-flash-latest',
+      'gemini-1.5-flash-latest',
+      'gemini-2.0-flash'
+    ];
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [
-          { role: 'user', parts: [{ text: `${systemPrompt}\n\n會友的問題是：「${question}」` }] }
-        ],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 1024
+    let answer = '';
+    let lastError = null;
+
+    for (const model of modelsToTry) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey.trim()}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              { role: 'user', parts: [{ text: `${systemPrompt}\n\n會友的問題是：「${question}」` }] }
+            ],
+            generationConfig: {
+              temperature: 0.3,
+              maxOutputTokens: 1024
+            }
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (answer) break;
+        } else {
+          lastError = await response.text();
         }
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      return {
-        statusCode: response.status,
-        body: JSON.stringify({ error: 'GEMINI_API_ERROR', details: errText })
-      };
+      } catch (err) {
+        lastError = err.message;
+      }
     }
 
-    const data = await response.json();
-    const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '抱歉，暫時無法產生回答。';
+    if (!answer) {
+      return {
+        statusCode: 502,
+        body: JSON.stringify({ error: 'GEMINI_API_ERROR', details: lastError })
+      };
+    }
 
     return {
       statusCode: 200,
