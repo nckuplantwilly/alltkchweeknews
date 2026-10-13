@@ -43,8 +43,17 @@
       <p>目錄尚未建立，請先至主系統上傳第一份週報。</p>
     </div>
 
-    <!-- Bulletin Grid -->
+    <!-- Bulletin Grid (最新 5 期) -->
     <div id="bulletin-grid" class="bulletin-grid" style="display:none;"></div>
+
+    <!-- 歷期週報收納區塊 (超過 5 期的歷史週報) -->
+    <div id="archive-section" class="archive-section" style="display:none;">
+      <button type="button" class="archive-toggle-btn" id="archive-toggle-btn" onclick="toggleArchive()">
+        <span>📚 查看歷期週報（第 6 期以前）</span>
+        <span class="archive-arrow" id="archive-arrow">▼</span>
+      </button>
+      <div id="archive-grid" class="bulletin-grid archive-grid" style="display:none;"></div>
+    </div>
 
     <footer class="page-footer">
       <p>© 2026 德光長老教會 · 週報 AI 智慧轉換系統</p>
@@ -343,15 +352,42 @@
         bulletins.sort((a, b) => (b.date || b.publishedAt || '').localeCompare(a.date || a.publishedAt || ''));
         cachedBulletins = bulletins;
 
-        // Render cards
+        // Render cards：首頁預設只呈現最新 5 期，其餘收納至歷期週報專區
         loadingEl.style.display = 'none';
         gridEl.style.display = 'grid';
-        renderCards(bulletins, gridEl);
+
+        const topBulletins = bulletins.slice(0, 5);
+        const olderBulletins = bulletins.slice(5);
+
+        renderCards(topBulletins, gridEl, 0);
+
+        const archiveSec = document.getElementById('archive-section');
+        const archiveGrid = document.getElementById('archive-grid');
+        if (olderBulletins.length > 0 && archiveSec && archiveGrid) {
+          archiveSec.style.display = 'flex';
+          renderCards(olderBulletins, archiveGrid, 5);
+        } else if (archiveSec) {
+          archiveSec.style.display = 'none';
+        }
 
       } catch (err) {
         console.error(err);
         loadingEl.style.display = 'none';
         errorEl.style.display = 'flex';
+      }
+    }
+
+    function toggleArchive() {
+      const archiveGrid = document.getElementById('archive-grid');
+      const arrow = document.getElementById('archive-arrow');
+      if (!archiveGrid || !arrow) return;
+      const isOpen = archiveGrid.style.display === 'grid';
+      if (isOpen) {
+        archiveGrid.style.display = 'none';
+        arrow.classList.remove('open');
+      } else {
+        archiveGrid.style.display = 'grid';
+        arrow.classList.add('open');
       }
     }
 
@@ -477,11 +513,9 @@
       appendMessage('user', escapeHTML(query));
       const loadingMsg = appendMessage('bot', '<span class="ai-typing">小幫手正在查閱週報資料中... 🕊️</span>');
 
-      // 步驟 1 (方案 C 首選)：呼叫 Netlify Function 後端代理 (全體會友共用，Key 不外露)
-      try {
-        // 預取最新 3 期完整週報 HTML 純文字（全文檢索）
+      // 預取最新 5 期完整週報 HTML 純文字（包含事奉輪值表、全期全文資訊）
       const fullTexts = {};
-      const recentBulletins = cachedBulletins.slice(0, 3);
+      const recentBulletins = cachedBulletins.slice(0, 5);
       await Promise.all(recentBulletins.map(async (b) => {
         if (!b.url) return;
         try {
@@ -499,30 +533,7 @@
         } catch (e) { /* 靜默忽略單篇失敗 */ }
       }));
 
-      const res = await fetch('/.netlify/functions/ask-gemini', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question: query,
-            bulletins: cachedBulletins,
-            fullTexts: fullTexts
-          })
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.answer) {
-            updateModeLabel('cloud');
-            loadingMsg.innerHTML = formatBotAnswer(data.answer);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn('Netlify 後端代理暫時無法連線，嘗試其他管道：', err);
-      }
-
-      // 步驟 1.2：Groq 超高速引擎直連備援（每日 14,400 次免費額度，絕不受限）
+      // 步驟 1 (GitHub Pages 主力首選)：Groq 超高速引擎直連（每日 14,400 次免費額度，反應極速且穩定）
       try {
         const groqKey = ['gsk_', 'R3BbwbobQaWgh8XZ', 'ZDxpWGdyb3FYhxyN', '7i7d5zrhl4o4P4tL8WJH'].join('');
         const eventForms = {
@@ -578,7 +589,32 @@ ${bulletinContext}`;
           }
         }
       } catch (gErr) {
-        console.warn('Groq 直連備援失敗：', gErr);
+        console.warn('Groq 直連呼叫失敗，嘗試其他備援：', gErr);
+      }
+
+      // 步驟 1.2 (Netlify 備援)：若環境有 Netlify Function 則嘗試
+      try {
+        const res = await fetch('/.netlify/functions/ask-gemini', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: query,
+            bulletins: cachedBulletins,
+            fullTexts: fullTexts
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.answer) {
+            updateModeLabel('cloud');
+            loadingMsg.innerHTML = formatBotAnswer(data.answer);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return;
+          }
+        }
+      } catch (err) {
+        // 靜默降級
       }
 
       // 步驟 1.5：若有自訂 localStorage Key 亦可使用
@@ -849,14 +885,15 @@ ${bulletinContext}`;
         .replace(/'/g, '&#39;');
     }
 
-    function renderCards(bulletins, container) {
+    function renderCards(bulletins, container, startIndex = 0) {
       const speechSupported = isSpeechSupported();
       if (!speechSupported) {
         document.body.classList.add('no-speech-synth');
       }
 
       bulletins.forEach((bulletin, index) => {
-        const isLatest = index === 0;
+        const realIndex = startIndex + index;
+        const isLatest = realIndex === 0;
         const card = document.createElement('div');
         card.className = 'bulletin-card' + (isLatest ? ' latest' : '');
 

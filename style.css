@@ -841,3 +841,48 @@ body {
 .ai-key-modal-btns button:hover {
   opacity: 0.85;
 }
+
+/* 歷期週報收納區塊 */
+.archive-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  margin-top: 10px;
+}
+
+.archive-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  padding: 12px 28px;
+  border-radius: 999px;
+  font-size: calc(1rem * var(--font-scale));
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+  transition: all 0.2s ease;
+}
+
+.archive-toggle-btn:hover {
+  background: #f1f5f9;
+  color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+
+.archive-arrow {
+  transition: transform 0.25s ease;
+  font-size: 0.85em;
+}
+
+.archive-arrow.open {
+  transform: rotate(180deg);
+}
+
+.archive-grid {
+  width: 100%;
+}
