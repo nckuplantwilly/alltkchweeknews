@@ -513,23 +513,35 @@
       appendMessage('user', escapeHTML(query));
       const loadingMsg = appendMessage('bot', '<span class="ai-typing">小幫手正在查閱週報資料中... 🕊️</span>');
 
-      // 預取最新 5 期完整週報 HTML 純文字（包含事奉輪值表、全期全文資訊）
-      const fullTexts = {};
-      const recentBulletins = cachedBulletins.slice(0, 5);
+      // 預取最新 3 期完整週報事奉輪值表與精簡內文（精準控制在 2,000 字以內，完全不超過 Groq 7,000 token 限制）
+      const roasterTexts = {};
+      const recentBulletins = cachedBulletins.slice(0, 3);
       await Promise.all(recentBulletins.map(async (b) => {
         if (!b.url) return;
         try {
-          // 取得原始 Gist HTML（繞過 htmlpreview.github.io，直接用 raw URL）
           const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
           const resp = await fetch(rawUrl, { cache: 'no-store' });
           if (!resp.ok) return;
           const html = await resp.text();
-          // 去除 <style> 與 <script> 標籤
           const cleanedHtml = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
           const div = document.createElement('div');
           div.innerHTML = cleanedHtml;
           const text = (div.innerText || div.textContent || '').replace(/\s+/g, ' ').trim();
-          if (text) fullTexts[b.date] = text.slice(0, 15000);
+          
+          // 智慧擷取事奉輪值表與聚會消息精華（通常在「事奉輪值表」或「事奉項目」之後）
+          let excerpt = '';
+          const roasterIdx = text.indexOf('事奉輪值表');
+          if (roasterIdx !== -1) {
+            excerpt = text.substring(roasterIdx, roasterIdx + 2000);
+          } else {
+            const tableIdx = text.indexOf('值週');
+            if (tableIdx !== -1) {
+              excerpt = text.substring(Math.max(0, tableIdx - 200), tableIdx + 1500);
+            } else {
+              excerpt = text.slice(-2000);
+            }
+          }
+          if (excerpt) roasterTexts[b.date] = excerpt;
         } catch (e) { /* 靜默忽略單篇失敗 */ }
       }));
 
@@ -541,19 +553,19 @@
           '2026-10-11': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '2026德光教會「閱讀・以賽亞」講座', '2027年全年讀經靈修書籍代訂購']
         };
 
-        const bulletinContext = cachedBulletins.slice(0, 15).map(b => {
-          const extraEvents = eventForms[b.date] ? `，本週活動報名：${eventForms[b.date].join('、')}` : '';
-          const fullText = fullTexts[b.date] ? `\n  【本期完整內文】：${fullTexts[b.date].slice(0, 10000)}` : '';
-          return `【期數 ${b.volume} 卷 ${b.issue} 期】主日日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，週報閱讀網址：${b.url}${fullText}`;
+        const bulletinContext = cachedBulletins.slice(0, 5).map(b => {
+          const extraEvents = eventForms[b.date] ? `，本週活動：${eventForms[b.date].join('、')}` : '';
+          const roasterInfo = roasterTexts[b.date] ? `\n  【本期事奉輪值與消息精選】：${roasterTexts[b.date]}` : '';
+          return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}${roasterInfo}`;
         }).join('\n\n');
 
         const systemPrompt = `你是一位熱心、親切且溫暖的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
 請依據下方提供的【歷期週報資料】來回答會友的詢問。
 回答守則：
 1. 語氣溫暖親切、尊重大方，使用繁體中文。
-2. 請仔細檢閱每期週報的【摘要】、【本週活動與報名表】以及【本期完整內文】（包含事奉輪值表、同工名單、聚會消息等）。
-3. 若會友詢問某位兄姊的服事（如司會、值週執事、司琴、音控、招待等），請在完整內文中的事奉輪值表中仔細查找，明確回報該兄姊在第幾期、哪一天擔任什麼服事職務。
-4. 提供連結時，請一律使用 Markdown 超連結語法（例如：[點此閱讀第 41 期週報](網址) 或 [點此填寫報名表](網址)），切勿直接貼出一整串落落長的原始網址，以方便長者直接點擊。
+2. 請仔細檢閱每期週報的【摘要】、【本週活動】以及【本期事奉輪值與消息精選】（包含事奉輪值表、同工名單、聚會消息等）。
+3. 若會友詢問某位兄姊的服事（如值週執事、值週長老、司會、主禮、司琴、音控、招待等），請在事奉輪值表中仔細查找，明確回報該兄姊在第幾期、哪一天擔任什麼服事職務。
+4. 提供連結時，請一律使用 Markdown 超連結語法（例如：[點此閱讀第 41 期週報](網址)），方便長者點擊。
 5. 盡量條理分明、簡明扼要，方便長者閱讀或聆聽。
 6. 若資料中確實完全未提及或找不到相關紀錄，請誠懇告知並簡要列出最近一兩期的主題供會友參考。
 7. 排除所有奉獻金額與明細相關的詢問。
@@ -574,7 +586,7 @@ ${bulletinContext}`;
               { role: 'user', content: query }
             ],
             temperature: 0.2,
-            max_tokens: 2048
+            max_tokens: 1500
           })
         });
 
@@ -595,61 +607,17 @@ ${bulletinContext}`;
         console.error('Groq 直連呼叫失敗，嘗試其他備援：', gErr);
       }
 
-      // 步驟 1.2 (Netlify 備援)：若環境有 Netlify Function 則嘗試
-      try {
-        const res = await fetch('/.netlify/functions/ask-gemini', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question: query,
-            bulletins: cachedBulletins,
-            fullTexts: fullTexts
-          })
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          if (data && data.answer) {
-            updateModeLabel('cloud');
-            loadingMsg.innerHTML = formatBotAnswer(data.answer);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            return;
-          }
-        }
-      } catch (err) {
-        // 靜默降級
-      }
-
       // 步驟 1.5：若有自訂 localStorage Key 亦可使用
       const apiKey = getGeminiKey();
       if (apiKey) {
         try {
-          const eventForms = {
-            '2026-10-04': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '慕道班報名表'],
-            '2026-10-11': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '2026德光教會「閱讀・以賽亞」講座', '2027年全年讀經靈修書籍代訂購']
-          };
-
-          const bulletinContext = cachedBulletins.slice(0, 15).map(b => {
-            const extraEvents = eventForms[b.date] ? `，本週活動報名：${eventForms[b.date].join('、')}` : '';
-            const fullText = fullTexts[b.date] ? `\n  【本期完整內文】：${fullTexts[b.date].slice(0, 10000)}` : '';
-            return `【期數 ${b.volume} 卷 ${b.issue} 期】主日日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，週報閱讀網址：${b.url}${fullText}`;
+          const bulletinContext = cachedBulletins.slice(0, 5).map(b => {
+            const roasterInfo = roasterTexts[b.date] ? `\n  【本期事奉輪值】：${roasterTexts[b.date]}` : '';
+            return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || ''}，網址：${b.url}${roasterInfo}`;
           }).join('\n\n');
 
-          const systemPrompt = `你是一位熱心、親切且溫暖的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
-請依據下方提供的【歷期週報資料】來回答會友的詢問。
-回答守則：
-1. 語氣溫暖親切、尊重大方，使用繁體中文。
-2. 請仔細檢閱每期週報的【摘要】、【本週活動與報名表】以及【本期完整內文】（包含事奉輪值表、同工名單、聚會消息等）。
-3. 若會友詢問某位兄姊的服事（如司會、值週執事、司琴、音控、招待等），請在完整內文中的事奉輪值表中仔細查找，明確回報該兄姊在第幾期、哪一天擔任什麼服事職務。
-4. 提供連結時，請一律使用 Markdown 超連結語法（例如：[點此閱讀第 41 期週報](網址) 或 [點此填寫報名表](網址)），切勿直接貼出一整串落落長的原始網址，以方便長者直接點擊。
-5. 盡量條理分明、簡明扼要，方便長者閱讀或聆聽。
-6. 若資料中確實完全未提及或找不到相關紀錄，請誠懇告知並簡要列出最近一兩期的主題供會友參考。
-7. 排除所有奉獻金額與明細相關的詢問。
+          const systemPrompt = `你是德光長老教會週報 AI 小幫手。請用繁體中文根據下方資料回答：\n${bulletinContext}`;
 
-【歷期週報資料】：
-${bulletinContext}`;
-
-          // 若以 gsk_ 開頭，走 Groq API；否則走 Gemini API
           if (apiKey.startsWith('gsk_')) {
             const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
               method: 'POST',
@@ -664,7 +632,7 @@ ${bulletinContext}`;
                   { role: 'user', content: query }
                 ],
                 temperature: 0.2,
-                max_tokens: 2048
+                max_tokens: 1500
               })
             });
 
@@ -685,7 +653,7 @@ ${bulletinContext}`;
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n會友的問題：「${query}」` }] }],
-                generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }
+                generationConfig: { temperature: 0.3, maxOutputTokens: 1500 }
               })
             });
 
@@ -714,6 +682,36 @@ ${bulletinContext}`;
       const q = query.toLowerCase();
       const results = [];
 
+      // 常見特會、活動與服事同工映射庫
+      const eventDateMapping = {
+        '野外禮拜': ['2026-10-04', '2026-10-11'],
+        '慕道班': ['2026-09-27', '2026-10-04'],
+        '讀經': ['2026-10-11'],
+        '以賽亞': ['2026-10-11'],
+        '聖餐': ['2026-09-27'],
+        '林貞杏': ['2026-10-04', '2026-10-11'],
+        '莊淑惠': ['2026-10-04', '2026-10-11'],
+        '梁晉榮': ['2026-10-04', '2026-10-11'],
+        '張恩祈': ['2026-10-11'],
+        '郭正堯': ['2026-10-11']
+      };
+
+      // 服事人物對照表（供本地搜尋直接回傳精確服事細節）
+      const ministryDetails = {
+        '林貞杏': {
+          '2026-10-11': '值週執事（第一場 09:00 台語禮拜與第二場 10:30 華語禮拜）',
+          '2026-10-04': '下週 10/11 值週執事輪值預備'
+        },
+        '莊淑惠': {
+          '2026-10-11': '值週長老',
+          '2026-10-04': '值週長老'
+        },
+        '梁晉榮': {
+          '2026-10-11': '值週執事',
+          '2026-10-04': '值週執事'
+        }
+      };
+
       cachedBulletins.forEach(b => {
         let score = 0;
         const title = (b.title || '').toLowerCase();
@@ -731,36 +729,6 @@ ${bulletinContext}`;
         if (q.includes('代禱') || q.includes('禱告')) {
           if (summary.includes('代禱') || summary.includes('消息') || summary.includes('推廣')) score += 12;
         }
-
-        // 常見特會、活動與服事同工映射庫（確保即便 Gemini 額度達上限或摘要未收錄，亦能精準查得）
-        const eventDateMapping = {
-          '野外禮拜': ['2026-10-04', '2026-10-11'],
-          '慕道班': ['2026-09-27', '2026-10-04'],
-          '讀經': ['2026-10-11'],
-          '以賽亞': ['2026-10-11'],
-          '聖餐': ['2026-09-27'],
-          '林貞杏': ['2026-10-04', '2026-10-11'],
-          '莊淑惠': ['2026-10-04', '2026-10-11'],
-          '梁晉榮': ['2026-10-04', '2026-10-11'],
-          '張恩祈': ['2026-10-11'],
-          '郭正堯': ['2026-10-11']
-        };
-
-        // 服事人物對照表（供本地搜尋直接回傳精確服事細節）
-        const ministryDetails = {
-          '林貞杏': {
-            '2026-10-11': '值週執事（第一場 09:00 台語禮拜與第二場 10:30 華語禮拜）',
-            '2026-10-04': '下週 10/11 值週執事輪值預備'
-          },
-          '莊淑惠': {
-            '2026-10-11': '值週長老',
-            '2026-10-04': '值週長老'
-          },
-          '梁晉榮': {
-            '2026-10-11': '值週執事',
-            '2026-10-04': '值週執事'
-          }
-        };
 
         // 活動與消息：必須有實質主題配對，避免「單車活動」因包含「活動」而硬配
         const specificKeywords = ['單車', '自行車', '退修會', '野外禮拜', '受洗', '培靈', '愛餐', '洗禮', '聖誕', '復活節', '營會'];
