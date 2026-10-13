@@ -773,7 +773,7 @@ ${bulletinContext}`;
       results.sort((a, b) => b.score - a.score);
 
       if (results.length === 0) {
-        let reply = `平安！在目前現有的週報紀錄中，未找到與「<strong>${escapeHTML(query)}</strong>」相關的活動消息。<br><br>💡 您可以詢問：「<strong>最新一期週報</strong>」、「<strong>羅牧師講道</strong>」或「<strong>讀經活動</strong>」，或點擊下方查看最新週報：<br>`;
+        let reply = `平安！在目前現有的週報紀錄中，未找到與「<strong>${escapeHTML(query)}</strong>」相關的活動消息。<br><br>💡 您可以詢問：「<strong>最新一期週報</strong>」、「<strong>牧師講道</strong>」或「<strong>讀經活動</strong>」，或點擊下方查看最新週報：<br>`;
         if (cachedBulletins.length > 0) {
           reply += renderBulletinResultCard(cachedBulletins[0]);
         }
