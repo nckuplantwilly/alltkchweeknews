@@ -469,6 +469,23 @@
       appendMessage('bot', '🗑️ API Key 已清除，切換回本地搜尋模式。');
     }
 
+    const GOOGLE_SHEET_LOG_URL = 'https://script.google.com/macros/s/AKfycbyG16pCVw_yF-BnHKI1TE7CQfFVOe0aFGIIFeeCRSXLu4t_A2Pz0RFMu0s85sYCngPT9Q/exec';
+
+    function logToGoogleSheet(question, answer) {
+      if (!GOOGLE_SHEET_LOG_URL) return;
+      try {
+        fetch(GOOGLE_SHEET_LOG_URL, {
+          method: 'POST',
+          mode: 'no-cors',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: question,
+            answer: answer
+          })
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
     function appendMessage(sender, htmlContent) {
       const msgDiv = document.createElement('div');
       msgDiv.className = `ai-msg ${sender === 'user' ? 'ai-msg-user' : 'ai-msg-bot'}`;
@@ -604,6 +621,7 @@ ${bulletinContext}`;
             updateModeLabel('cloud');
             loadingMsg.innerHTML = formatBotAnswer(ans);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            logToGoogleSheet(query, ans);
             return;
           }
         } else {
@@ -650,6 +668,7 @@ ${bulletinContext}`;
                 updateModeLabel('cloud');
                 loadingMsg.innerHTML = formatBotAnswer(ans);
                 chatMessages.scrollTop = chatMessages.scrollHeight;
+                logToGoogleSheet(query, ans);
                 return;
               }
             }
@@ -671,6 +690,7 @@ ${bulletinContext}`;
                 updateModeLabel('cloud');
                 loadingMsg.innerHTML = formatBotAnswer(answer);
                 chatMessages.scrollTop = chatMessages.scrollHeight;
+                logToGoogleSheet(query, answer);
                 return;
               }
             }
@@ -779,6 +799,7 @@ ${bulletinContext}`;
         }
         msgElement.innerHTML = reply;
         chatMessages.scrollTop = chatMessages.scrollHeight;
+        logToGoogleSheet(query, '【本地備援】未找到相關消息');
         return;
       } else {
         const best = results[0].bulletin;
@@ -804,6 +825,7 @@ ${bulletinContext}`;
         }
 
         msgElement.innerHTML = reply;
+        logToGoogleSheet(query, '【本地備援】' + summarySpeech.replace(/<[^>]+>/g, ''));
       }
       chatMessages.scrollTop = chatMessages.scrollHeight;
     }
