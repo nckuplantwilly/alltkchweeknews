@@ -587,9 +587,12 @@ ${bulletinContext}`;
             chatMessages.scrollTop = chatMessages.scrollHeight;
             return;
           }
+        } else {
+          const errBody = await groqRes.text();
+          console.error('Groq API 回傳非 200 狀態碼:', groqRes.status, errBody);
         }
       } catch (gErr) {
-        console.warn('Groq 直連呼叫失敗，嘗試其他備援：', gErr);
+        console.error('Groq 直連呼叫失敗，嘗試其他備援：', gErr);
       }
 
       // 步驟 1.2 (Netlify 備援)：若環境有 Netlify Function 則嘗試
