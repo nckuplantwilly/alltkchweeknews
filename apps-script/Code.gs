@@ -124,6 +124,27 @@ const KNOWN_ACTIVITY_BUTTONS = [
     href: 'https://docs.google.com/forms/d/e/1FAIpQLSef6aEXbLACST9abmXXsF01CoT8RhKVdoy9cxUZA7dEMGAQLw/viewform',
     label: '愛相隨小組報名',
     isOffering: false
+  },
+  {
+    keys: ['閱讀・以賽亞', '閱讀以賽亞', '以賽亞書與上帝的救贖歷史', '閱讀.以賽亞'],
+    match: 'FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw',
+    href: 'https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform',
+    label: '2026德光教會「閱讀・以賽亞」講座報名',
+    isOffering: false
+  },
+  {
+    keys: ['2027全年讀經', '2027年全年讀經', '遵守生命令'],
+    match: 'FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA',
+    href: 'https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header',
+    label: '2027年全年讀經「遵守生命令」靈修書籍代訂購',
+    isOffering: false
+  },
+  {
+    keys: ['社青＆兒主野外禮拜', '社青&兒主野外禮拜', '粉牛樂園', '社青 ＆ 兒主野外禮拜'],
+    match: 'cQdSLqTaKDy32J5b7',
+    href: 'https://forms.gle/cQdSLqTaKDy32J5b7',
+    label: '社青＆兒主野外禮拜報名表',
+    isOffering: false
   }
 ];
 
@@ -778,7 +799,7 @@ function startTestingPeriod() {
   Logger.log('=== 測試期：目錄只留 2026-09-27，並重辨識 2026-09-20 ===');
   keepOnlyWebsiteDates(['2026-09-27']);
   reprocessDateWithGemini('2026-09-20');
-  Logger.log('🎉 請重新整理 https://tkch-weeknews-all.netlify.app/ 應只剩 9/27 與剛上架的 9/20。');
+  Logger.log('🎉 請重新整理 https://nckuplantwilly.github.io/alltkchweeknews/ 應只剩 9/27 與剛上架的 9/20。');
 }
 
 /** 只改網站目錄，不刪 Drive PDF、也不刪 Gist 檔（之後要加回來很快）。 */
@@ -928,17 +949,92 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
     date: finalDate,
     title: title,
     previewUrl: uploaded.previewUrl,
-    fileName: file.getName()
+    fileName: file.getName(),
+    html: finalHtml
   });
 }
 
 /**
- * 📧 寄送週報上架通知信至指定的管理員信箱
+ * 🔍 分析 HTML 內文中的活動按鈕超連結，以及是否有提及「報名/登記/QR Code」卻缺漏連結的項目
+ */
+function inspectHtmlLinksAndWarnings(html) {
+  const result = {
+    validLinks: [],
+    suspiciousItems: []
+  };
+  if (!html) return result;
+
+  // 1. 抓出所有活動按鈕超連結
+  const anchorRegex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi;
+  let m;
+  const seenUrls = {};
+  while ((m = anchorRegex.exec(html)) !== null) {
+    const url = m[1];
+    const text = m[2].replace(/<[^>]+>/g, '').trim();
+    if (url && !seenUrls[url] && !/facebook\.com|reurl\.cc\/O56r6A/i.test(url)) {
+      seenUrls[url] = true;
+      result.validLinks.push({ label: text || '活動連結', url: url });
+    }
+  }
+
+  // 2. 檢查內文中提及「報名/登記/QR Code/掃描」，但該區塊沒有 <a> 標籤的條目
+  const itemRegex = /<(li|p)>([\s\S]*?)<\/\1>/gi;
+  while ((m = itemRegex.exec(html)) !== null) {
+    const content = m[2];
+    const textOnly = content.replace(/<[^>]+>/g, '').trim();
+    const hasCallToAction = /(報名|登記|QR\s*Code|掃描)/i.test(textOnly);
+    const hasLink = /<a\s+[^>]*href=/i.test(content);
+    if (hasCallToAction && !hasLink) {
+      // 排除單純說明或非活動報名的例行文字
+      if (/歡迎索取|一樓副堂最後一扇門|代禱箱|奉獻/.test(textOnly)) continue;
+      const summary = textOnly.slice(0, 45).replace(/\s+/g, ' ');
+      if (summary && result.suspiciousItems.indexOf(summary) === -1) {
+        result.suspiciousItems.push(summary + (textOnly.length > 45 ? '…' : ''));
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * 📧 寄送週報上架通知信至指定的管理員信箱（含超連結清單與缺漏提醒）
  */
 function sendPublishNotification(data) {
   if (!NOTIFICATION_EMAILS || NOTIFICATION_EMAILS.length === 0) return;
   const recipient = NOTIFICATION_EMAILS.join(',');
   const subject = '【德光週報發布通知】' + data.date + ' (' + data.title + ')';
+
+  const check = inspectHtmlLinksAndWarnings(data.html || '');
+  let linkSummaryText = '';
+  let linkSummaryHtml = '';
+
+  if (check.validLinks.length > 0) {
+    linkSummaryText += '\n• 本期已植入活動連結 (' + check.validLinks.length + ' 個)：\n' +
+      check.validLinks.map(function (l) { return '  - ' + l.label + '：' + l.url; }).join('\n') + '\n';
+    linkSummaryHtml +=
+      '<div style="background-color: #F0FDF4; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; border-left: 4px solid #16A34A;">' +
+        '<p style="margin: 0 0 6px; font-weight: bold; color: #166534; font-size: 14px;">🔗 本期已自動植入活動連結 (' + check.validLinks.length + ' 個)：</p>' +
+        '<ul style="margin: 0; padding-left: 20px; color: #15803D; font-size: 13px; line-height: 1.6;">' +
+          check.validLinks.map(function (l) {
+            return '<li><a href="' + l.url + '" target="_blank" style="color: #15803D; font-weight: 500; text-decoration: underline;">' + l.label + '</a></li>';
+          }).join('') +
+        '</ul>' +
+      '</div>';
+  }
+
+  if (check.suspiciousItems.length > 0) {
+    linkSummaryText += '\n⚠️【待確認缺漏提醒】下列內容提及報名/登記/QR Code，但未發現超連結：\n' +
+      check.suspiciousItems.map(function (item) { return '  - ' + item; }).join('\n') + '\n';
+    linkSummaryHtml +=
+      '<div style="background-color: #FFFBEB; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; border-left: 4px solid #D97706;">' +
+        '<p style="margin: 0 0 6px; font-weight: bold; color: #92400E; font-size: 14px;">⚠️【重複確認提醒】下列內容提及「報名/登記/QR Code」，但未發現超連結：</p>' +
+        '<ul style="margin: 0; padding-left: 20px; color: #B45309; font-size: 13px; line-height: 1.5;">' +
+          check.suspiciousItems.map(function (item) { return '<li>' + item + '</li>'; }).join('') +
+        '</ul>' +
+        '<p style="margin: 8px 0 0; font-size: 12px; color: #78350F;">💡 說明：若上述活動需提供線上報名，可在 Code.gs 的 KNOWN_ACTIVITY_BUTTONS 加入關鍵字與網址，或請幹事在 Word 貼上 QR Code 時為圖片加上超連結。</p>' +
+      '</div>';
+  }
 
   const bodyText =
     '平安！\n\n' +
@@ -947,8 +1043,9 @@ function sendPublishNotification(data) {
     '• 週報卷期：' + data.title + '\n' +
     '• 原始檔案：' + data.fileName + '\n' +
     '• 線上閱讀：' + data.previewUrl + '\n' +
-    '• 歷期目錄：https://tkch-weeknews-all.netlify.app/\n\n' +
-    '系統已自動排除奉獻資料、校對專有名詞（劉娗坊、教界消息）並注入活動超連結。\n' +
+    '• 歷期目錄：https://nckuplantwilly.github.io/alltkchweeknews/\n' +
+    linkSummaryText + '\n' +
+    '系統已自動排除奉獻資料、校對專有名詞與教界消息，並注入活動超連結。\n' +
     '此信件由德光週報自動化系統發送。';
 
   const htmlBody =
@@ -963,14 +1060,15 @@ function sendPublishNotification(data) {
         '<p style="margin: 6px 0; color: #334155;"><strong>📖 週報卷期：</strong>' + data.title + '</p>' +
         '<p style="margin: 6px 0; color: #334155;"><strong>📄 原始檔案：</strong>' + data.fileName + '</p>' +
       '</div>' +
+      linkSummaryHtml +
       '<div style="text-align: center; margin: 28px 0;">' +
         '<a href="' + data.previewUrl + '" target="_blank" style="display: inline-block; background-color: #5850EC; color: #FFFFFF; font-weight: bold; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-size: 15px; box-shadow: 0 4px 6px -1px rgba(88, 80, 236, 0.2);">' +
           '📖 立即閱讀本週週報 →' +
         '</a>' +
       '</div>' +
       '<div style="border-top: 1px solid #E2E8F0; padding-top: 16px; margin-top: 20px; font-size: 13px; color: #64748B; line-height: 1.6;">' +
-        '<p style="margin: 4px 0;">🌐 歷期週報首頁：<a href="https://tkch-weeknews-all.netlify.app/" target="_blank" style="color: #5850EC;">tkch-weeknews-all.netlify.app</a></p>' +
-        '<p style="margin: 4px 0;">✨ 系統已自動排除奉獻明細、正規化同工姓名（劉娗坊），並已植入活動報名超連結。</p>' +
+        '<p style="margin: 4px 0;">🌐 歷期週報首頁：<a href="https://nckuplantwilly.github.io/alltkchweeknews/" target="_blank" style="color: #5850EC;">nckuplantwilly.github.io/alltkchweeknews</a></p>' +
+        '<p style="margin: 4px 0;">✨ 系統已自動排除奉獻明細，並已植入活動報名超連結。</p>' +
       '</div>' +
     '</div>';
 
@@ -993,12 +1091,22 @@ function sendPublishNotification(data) {
 function testEmailNotification() {
   Logger.log('🧪 正在發送測試信至：' + NOTIFICATION_EMAILS.join(', '));
   sendPublishNotification({
-    date: '2026-09-27',
-    title: '第 33 卷第 39 期（測試通知）',
-    fileName: '20260927教會周報鏈接檔.pdf',
-    previewUrl: 'https://tkch-weeknews-all.netlify.app/'
+    date: '2026-10-18',
+    title: '第 33 卷第 42 期（測試通知）',
+    fileName: '20261018教會周報鏈接檔.pdf',
+    previewUrl: 'https://nckuplantwilly.github.io/alltkchweeknews/',
+    html: '<p>「閱讀・以賽亞」講座請掃描 QR Code 報名</p><p><a href="https://reurl.cc/r30vKE" class="qr-link">中保代禱專頁</a></p>'
   });
   Logger.log('🎉 測試郵件發送完成！請檢查您的收件匣（及垃圾郵件匣）。');
+}
+
+/**
+ * 🛠 一鍵修復第 42 期（2026-10-18）週報連結（0 消耗 Gemini 額度）
+ */
+function repairIssue42() {
+  Logger.log('=== 專門補修第 42 期（2026-10-18）連結 ===');
+  repairOneDate('2026-10-18');
+  Logger.log('🎉 第 42 期補修完畢！請重新整理歷期週報網站確認。');
 }
 
 function backupPdfToPersonal(file, replaceBackup) {
