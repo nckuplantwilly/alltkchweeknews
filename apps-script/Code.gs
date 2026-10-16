@@ -1967,13 +1967,14 @@ function inflateFlateStreamsAndScan(rawContent, addUrl) {
   const re = /\/Filter\s*(?:\[\s*)?\/FlateDecode[\s\S]{0,500}?stream\r?\n/g;
   let match;
   let count = 0;
-  while ((match = re.exec(rawContent)) !== null && count < 60) {
+  while ((match = re.exec(rawContent)) !== null && count < 80) {
     const start = match.index + match[0].length;
     const end = rawContent.indexOf('endstream', start);
     if (end < 0) continue;
     let data = rawContent.slice(start, end);
-    if (data.charAt(data.length - 1) === '\n') data = data.slice(0, -1);
-    if (data.charAt(data.length - 1) === '\r') data = data.slice(0, -1);
+    while (data.length > 0 && (data.charAt(data.length - 1) === '\n' || data.charAt(data.length - 1) === '\r')) {
+      data = data.slice(0, -1);
+    }
     try {
       const inflated = inflateZlibLatin1(data);
       if (inflated) {
@@ -1989,12 +1990,18 @@ function inflateFlateStreamsAndScan(rawContent, addUrl) {
 }
 
 function inflateZlibLatin1(latin1) {
+  if (!latin1 || latin1.length < 6) return '';
   const bytes = [];
   for (let i = 0; i < latin1.length; i++) {
     bytes.push(latin1.charCodeAt(i) & 0xFF);
   }
-  if (bytes.length < 6) return '';
-  const hasZlibHeader = bytes[0] === 0x78 && (bytes[1] === 0x01 || bytes[1] === 0x9C || bytes[1] === 0xDA);
+  const cmf = bytes[0];
+  const flg = bytes[1];
+  // RFC 1950 規範：CMF 低 4 位為 8（Deflate），且 (CMF * 256 + FLG) % 31 === 0
+  // 支援 32K 視窗 (0x78) 與 CorelDRAW / InDesign 等輸出的 16K 視窗 (0x68 0xDE)
+  const isDeflate = (cmf & 0x0F) === 8;
+  const isCheckValid = ((cmf * 256 + flg) % 31) === 0;
+  const hasZlibHeader = isDeflate && isCheckValid;
   const deflateBody = hasZlibHeader ? bytes.slice(2, bytes.length - 4) : bytes.slice(0, bytes.length);
   const gzipBytes = [0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03]
     .concat(deflateBody)
