@@ -56,8 +56,8 @@ const MIN_BULLETIN_DATE = '2022-12-25';
 /** 新週報（會呼叫 Gemini）每次最多幾份。務必維持 1，以免配額瞬間燒完。 */
 const GEMINI_BATCH_LIMIT = 1;
 
-/** 舊週報補修（不呼叫 Gemini）每次幾份。GitHub／Drive 配額遠比 Gemini 寬。 */
-const REPAIR_BATCH_LIMIT = 5;
+/** 舊週報補修（不呼叫 Gemini）每次最多幾份。GitHub Gist 配額很寬，設為 10 可一次修復所有已上架期數。 */
+const REPAIR_BATCH_LIMIT = 10;
 
 /** 歷史第一次轉檔（會呼叫 Gemini）每天建議 1 份。 */
 const BACKFILL_BATCH_LIMIT = 1;
