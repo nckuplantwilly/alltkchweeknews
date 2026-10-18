@@ -2428,7 +2428,7 @@ function injectAccessibilityAndTTS(html) {
   }
   body {
     font-size: 1rem !important;
-    line-height: 1.6 !important;
+    line-height: 1.75 !important;
     padding: 12px !important;
     margin: 0 auto !important;
   }
@@ -2436,36 +2436,68 @@ function injectAccessibilityAndTTS(html) {
     display: block !important;
     margin-left: auto !important;
     margin-right: auto !important;
-    max-width: 650px !important;
+    max-width: 680px !important;
     width: 100% !important;
   }
-  /* 標題與內文依照 rem 標準縮放，杜絕 em 巢狀累乘導致標題爆炸或內文無法放大的問題 */
-  header h1 { font-size: 1.5rem !important; }
-  header .subtitle { font-size: 1.1rem !important; }
-  header .date-info { font-size: 0.9rem !important; }
-  h1 { font-size: 1.5rem !important; }
-  h2 { font-size: 1.3rem !important; }
-  h3 { font-size: 1.15rem !important; }
+  /* 階梯式長輩字體：正文最高達 30px，程序表 26px，表格 22px，標題優雅自適應 */
+  header h1 { font-size: 1.45rem !important; line-height: 1.3 !important; }
+  header .subtitle { font-size: 1.05rem !important; }
+  header .date-info { font-size: 0.88rem !important; }
+  h1 { font-size: 1.45rem !important; }
+  h2 { font-size: 1.25rem !important; }
+  h3 { font-size: 1.1rem !important; }
   details summary {
-    font-size: 1.05rem !important;
+    font-size: 0.95rem !important;
     line-height: 1.4 !important;
     font-weight: 600 !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    gap: 8px !important;
+    flex-wrap: wrap !important;
   }
-  .theme-banner, .theme-banner p { font-size: 0.95rem !important; }
-  .program-step, .program-step span {
-    font-size: 0.95rem !important;
-    line-height: 1.5 !important;
+  .theme-banner, .theme-banner p { font-size: 0.95rem !important; line-height: 1.6 !important; }
+  .program-step {
+    font-size: 0.88rem !important;
+    line-height: 1.6 !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: baseline !important;
+    gap: 8px !important;
+    flex-wrap: wrap !important;
+    padding: 6px 0 !important;
   }
-  table { font-size: 0.9rem !important; }
+  .program-step span {
+    font-size: 0.88rem !important;
+  }
+  .program-step span:first-child {
+    font-weight: 500;
+    flex: 1 1 auto;
+    word-break: break-word;
+  }
+  .program-step span:last-child {
+    flex-shrink: 0;
+    font-weight: 600;
+  }
+  .table-container {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    margin: 8px 0 !important;
+  }
+  table {
+    font-size: 0.75rem !important;
+    width: 100% !important;
+  }
   table th, table td {
-    font-size: 0.9rem !important;
-    line-height: 1.4 !important;
+    font-size: 0.75rem !important;
+    line-height: 1.45 !important;
+    padding: 8px 10px !important;
   }
   p, li, blockquote {
     font-size: 1rem !important;
-    line-height: 1.6 !important;
+    line-height: 1.75 !important;
   }
-  footer, footer p { font-size: 0.88rem !important; }
+  footer, footer p { font-size: 0.85rem !important; line-height: 1.6 !important; }
   .tkch-a11y-bar {
     position: sticky;
     top: 10px;
@@ -2546,9 +2578,9 @@ function injectAccessibilityAndTTS(html) {
   const a11yToolbar = `
   <div class="tkch-a11y-bar" id="tkch-a11y-toolbar" role="toolbar" aria-label="無障礙輔助工具">
     <span class="tkch-a11y-label">字體：</span>
-    <button type="button" class="tkch-btn" onclick="adjustWeeklyFont(-0.1)" title="縮小字體">A-</button>
+    <button type="button" class="tkch-btn" onclick="adjustWeeklyFont(-0.15)" title="縮小字體">A-</button>
     <button type="button" class="tkch-btn active" id="btn-font-reset" onclick="adjustWeeklyFont(0)" title="標準字體">A</button>
-    <button type="button" class="tkch-btn" onclick="adjustWeeklyFont(0.1)" title="放大字體">A+</button>
+    <button type="button" class="tkch-btn" onclick="adjustWeeklyFont(0.15)" title="放大字體（正文最高達 30px）">A+</button>
     <span style="color:#cbd5e1;margin:0 2px;">|</span>
     <button type="button" class="tkch-btn tkch-btn-tts" id="btn-read-all" onclick="toggleReadAll()">🔊 語音朗讀整篇</button>
   </div>
@@ -2564,7 +2596,7 @@ function injectAccessibilityAndTTS(html) {
       const saved = localStorage.getItem(FONT_KEY);
       if (saved) {
         const val = parseFloat(saved);
-        if (!isNaN(val) && val >= 0.85 && val <= 1.5) weeklyFontScale = val;
+        if (!isNaN(val) && val >= 0.85 && val <= 1.88) weeklyFontScale = val;
       }
     } catch(e) {}
     applyWeeklyFont();
@@ -2573,9 +2605,9 @@ function injectAccessibilityAndTTS(html) {
   function adjustWeeklyFont(delta) {
     if (delta === 0) weeklyFontScale = 1.0;
     else {
-      weeklyFontScale = Math.round((weeklyFontScale + delta) * 10) / 10;
+      weeklyFontScale = Math.round((weeklyFontScale + delta) * 100) / 100;
       if (weeklyFontScale < 0.85) weeklyFontScale = 0.85;
-      if (weeklyFontScale > 1.5) weeklyFontScale = 1.5;
+      if (weeklyFontScale > 1.88) weeklyFontScale = 1.88;
     }
     try { localStorage.setItem(FONT_KEY, weeklyFontScale.toString()); } catch(e) {}
     applyWeeklyFont();

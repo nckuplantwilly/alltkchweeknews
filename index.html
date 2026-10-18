@@ -25,9 +25,9 @@
     <!-- Accessibility Bar -->
     <div class="accessibility-bar" role="toolbar" aria-label="無障礙工具列">
       <span class="a11y-label">字體大小：</span>
-      <button type="button" class="font-btn" id="font-decrease" aria-label="縮小字體" onclick="adjustFont(-0.1)">A-</button>
+      <button type="button" class="font-btn" id="font-decrease" aria-label="縮小字體" onclick="adjustFont(-0.15)">A-</button>
       <button type="button" class="font-btn active" id="font-reset" aria-label="重設字體" onclick="adjustFont(0)">A</button>
-      <button type="button" class="font-btn" id="font-increase" aria-label="放大字體" onclick="adjustFont(0.1)">A+</button>
+      <button type="button" class="font-btn" id="font-increase" aria-label="放大字體（最高達 30px）" onclick="adjustFont(0.15)">A+</button>
     </div>
 
     <!-- Loading State -->
@@ -156,7 +156,7 @@
         const saved = localStorage.getItem(FONT_STORAGE_KEY);
         if (saved !== null) {
           const val = parseFloat(saved);
-          if (!isNaN(val) && val >= 0.85 && val <= 1.5) {
+          if (!isNaN(val) && val >= 0.85 && val <= 1.88) {
             currentFontScale = Math.round(val * 100) / 100;
           }
         }
@@ -170,9 +170,9 @@
       if (delta === 0) {
         currentFontScale = 1.0;
       } else {
-        let next = Math.round((currentFontScale + delta) * 10) / 10;
+        let next = Math.round((currentFontScale + delta) * 100) / 100;
         if (next < 0.85) next = 0.85;
-        if (next > 1.5) next = 1.5;
+        if (next > 1.88) next = 1.88;
         currentFontScale = next;
       }
       try {
@@ -199,7 +199,7 @@
       }
       const incBtn = document.getElementById('font-increase');
       if (incBtn) {
-        incBtn.disabled = currentFontScale >= 1.5;
+        incBtn.disabled = currentFontScale >= 1.88;
       }
     }
 
