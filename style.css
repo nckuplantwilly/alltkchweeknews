@@ -613,6 +613,11 @@ body {
   word-break: break-word;
 }
 
+.ai-msg p, .ai-msg li, .ai-msg span, .ai-msg div {
+  font-size: 1em;
+  line-height: inherit;
+}
+
 .ai-msg-bot {
   align-self: flex-start;
   background: #ffffff;

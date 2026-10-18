@@ -2423,11 +2423,12 @@ function injectAccessibilityAndTTS(html) {
   :root {
     --font-scale: 1.0;
   }
-  html, body {
-    display: block !important;
+  html {
+    font-size: calc(16px * var(--font-scale)) !important;
   }
   body {
-    font-size: calc(1rem * var(--font-scale)) !important;
+    font-size: 1rem !important;
+    line-height: 1.6 !important;
     padding: 12px !important;
     margin: 0 auto !important;
   }
@@ -2438,12 +2439,33 @@ function injectAccessibilityAndTTS(html) {
     max-width: 650px !important;
     width: 100% !important;
   }
-  p, li, div, td, th, blockquote, summary {
-    font-size: calc(1em * var(--font-scale));
+  /* 標題與內文依照 rem 標準縮放，杜絕 em 巢狀累乘導致標題爆炸或內文無法放大的問題 */
+  header h1 { font-size: 1.5rem !important; }
+  header .subtitle { font-size: 1.1rem !important; }
+  header .date-info { font-size: 0.9rem !important; }
+  h1 { font-size: 1.5rem !important; }
+  h2 { font-size: 1.3rem !important; }
+  h3 { font-size: 1.15rem !important; }
+  details summary {
+    font-size: 1.05rem !important;
+    line-height: 1.4 !important;
+    font-weight: 600 !important;
   }
-  h1 { font-size: calc(1.8rem * var(--font-scale)) !important; }
-  h2 { font-size: calc(1.4rem * var(--font-scale)) !important; }
-  h3 { font-size: calc(1.2rem * var(--font-scale)) !important; }
+  .theme-banner, .theme-banner p { font-size: 0.95rem !important; }
+  .program-step, .program-step span {
+    font-size: 0.95rem !important;
+    line-height: 1.5 !important;
+  }
+  table { font-size: 0.9rem !important; }
+  table th, table td {
+    font-size: 0.9rem !important;
+    line-height: 1.4 !important;
+  }
+  p, li, blockquote {
+    font-size: 1rem !important;
+    line-height: 1.6 !important;
+  }
+  footer, footer p { font-size: 0.88rem !important; }
   .tkch-a11y-bar {
     position: sticky;
     top: 10px;
