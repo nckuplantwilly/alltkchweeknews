@@ -124,8 +124,23 @@
   <script>
     const GITHUB_USERNAME = 'wowidance-cloud';
     const INDEX_FILENAME = 'tkch-bulletin-index.json';
-    const INDEX_DESCRIPTION = 'TKCH-BULLETIN-INDEX';
     const FONT_STORAGE_KEY = 'tkch-font-scale';
+
+    // ==========================================================================
+    // 🔑 GROQ API KEY 智慧多組輪替池（自動負載分流 + 遇 429 毫秒級自動切換）
+    // 您可以在此處加入多個 Groq 帳號的 API Key，用逗號分隔：
+    // ==========================================================================
+    const GROQ_KEYS_POOL = [
+      // 第一組 Key（預設現有）
+      ['gsk_', 'R3BbwbobQaWgh8XZ', 'ZDxpWGdyb3FYhxyN', '7i7d5zrhl4o4P4tL8WJH'].join(''),
+      // 第二組 Key（請用單引號包住貼在引號內，例如 'gsk_xxxxxxx'）：
+      '',
+      // 第三組 Key（請用單引號包住貼在引號內，例如 'gsk_yyyyyyy'）：
+      '',
+      // 第四組 Key（如有需要可繼續增加）：
+      ''
+    ];
+    let groqKeyPointer = 0;
 
     /* ==========================================================================
        功能一：字體放大/縮小
@@ -570,10 +585,10 @@
 
       // 步驟 1 (GitHub Pages 主力首選)：Groq 超高速引擎直連（每日 14,400 次免費額度，反應極速且穩定）
       try {
-        const groqKey = ['gsk_', 'R3BbwbobQaWgh8XZ', 'ZDxpWGdyb3FYhxyN', '7i7d5zrhl4o4P4tL8WJH'].join('');
         const eventForms = {
           '2026-10-04': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '慕道班報名表'],
-          '2026-10-11': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '2026德光教會「閱讀・以賽亞」講座', '2027年全年讀經靈修書籍代訂購']
+          '2026-10-11': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '2026德光教會「閱讀・以賽亞」講座', '2027年全年讀經靈修書籍代訂購'],
+          '2026-10-18': ['2026德光教會「閱讀・以賽亞」講座 (https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform)', '2027年全年讀經靈修書籍代訂購 (https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header)', '德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)']
         };
 
         const bulletinContext = cachedBulletins.slice(0, 5).map(b => {
@@ -597,36 +612,56 @@
 【歷期週報資料】：
 ${bulletinContext}`;
 
-        const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${groqKey}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'qwen/qwen3.8-27b',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: query }
-            ],
-            temperature: 0.2,
-            max_tokens: 1500
-          })
-        });
+        // 智慧 Key 輪替池與故障自動轉移
+        const validGroqKeys = GROQ_KEYS_POOL.filter(k => k && typeof k === 'string' && k.trim().length > 15);
+        const keysToTry = validGroqKeys.length > 0 ? validGroqKeys : [
+          ['gsk_', 'R3BbwbobQaWgh8XZ', 'ZDxpWGdyb3FYhxyN', '7i7d5zrhl4o4P4tL8WJH'].join('')
+        ];
 
-        if (groqRes.ok) {
-          const gData = await groqRes.json();
-          const ans = gData.choices?.[0]?.message?.content;
-          if (ans) {
-            updateModeLabel('cloud');
-            loadingMsg.innerHTML = formatBotAnswer(ans);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            logToGoogleSheet(query, ans);
-            return;
+        // 輪流負載分流（Round-Robin）
+        const startIndex = groqKeyPointer % keysToTry.length;
+        groqKeyPointer = (groqKeyPointer + 1) % keysToTry.length;
+
+        for (let attempt = 0; attempt < keysToTry.length; attempt++) {
+          const keyIdx = (startIndex + attempt) % keysToTry.length;
+          const currentKey = keysToTry[keyIdx];
+
+          try {
+            const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${currentKey}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: 'qwen/qwen3.8-27b',
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: query }
+                ],
+                temperature: 0.2,
+                max_tokens: 1500
+              })
+            });
+
+            if (groqRes.ok) {
+              const gData = await groqRes.json();
+              const ans = gData.choices?.[0]?.message?.content;
+              if (ans) {
+                updateModeLabel('cloud');
+                loadingMsg.innerHTML = formatBotAnswer(ans);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+                logToGoogleSheet(query, ans);
+                return; // 成功獲得回覆，正常結束
+              }
+            } else {
+              const errBody = await groqRes.text();
+              console.warn(`Groq Key [${keyIdx + 1}/${keysToTry.length}] 回傳 ${groqRes.status}，自動切換下一組 Key 重試...`, errBody);
+              // 若為 429 或其他錯誤，迴圈繼續嘗試下一把 Key
+            }
+          } catch (callErr) {
+            console.warn(`Groq Key [${keyIdx + 1}] 連線異常，嘗試下一組：`, callErr);
           }
-        } else {
-          const errBody = await groqRes.text();
-          console.error('Groq API 回傳非 200 狀態碼:', groqRes.status, errBody);
         }
       } catch (gErr) {
         console.error('Groq 直連呼叫失敗，嘗試其他備援：', gErr);
