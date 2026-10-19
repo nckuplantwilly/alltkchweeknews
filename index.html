@@ -541,10 +541,10 @@
       appendMessage('user', escapeHTML(query));
       const loadingMsg = appendMessage('bot', '<span class="ai-typing">小幫手正在查閱週報資料中... 🕊️</span>');
 
-      // 預取最新 3 期完整週報事奉輪值表與精簡內文（精準控制在 2,000 字以內，完全不超過 Groq 7,000 token 限制）
+      // 預取最新 3 期完整週報事奉輪值表與精簡內文（精準控制字數，最新一期充裕、前兩期精簡，避免觸發 Groq ITPM/OTPM 限制）
       const roasterTexts = {};
       const recentBulletins = cachedBulletins.slice(0, 3);
-      await Promise.all(recentBulletins.map(async (b) => {
+      await Promise.all(recentBulletins.map(async (b, idx) => {
         if (!b.url) return;
         try {
           const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
@@ -556,30 +556,30 @@
           div.innerHTML = cleanedHtml;
           const text = (div.innerText || div.textContent || '').replace(/\s+/g, ' ').trim();
           
-          // 智慧擷取：事奉輪值表 + 代禱事項/禱告園地（精準控制長度，同時涵蓋服事輪值與代禱代求）
+          const isLatest = idx === 0;
           let parts = [];
           
           // 1. 代禱事項 / 禱告園地
           const prayerIdx = text.indexOf('代禱事項') !== -1 ? text.indexOf('代禱事項') : text.indexOf('禱告園地');
           if (prayerIdx !== -1) {
-            parts.push('【本期代禱事項與禱告園地】：' + text.substring(prayerIdx, prayerIdx + 900));
+            parts.push('【本期代禱事項】：' + text.substring(prayerIdx, prayerIdx + (isLatest ? 450 : 250)));
           }
 
           // 2. 事奉輪值表
           const roasterIdx = text.indexOf('事奉輪值表');
           if (roasterIdx !== -1) {
-            parts.push('【本期事奉輪值表】：' + text.substring(roasterIdx, roasterIdx + 1600));
+            parts.push('【本期事奉輪值】：' + text.substring(roasterIdx, roasterIdx + (isLatest ? 800 : 450)));
           } else {
             const tableIdx = text.indexOf('值週');
             if (tableIdx !== -1) {
-              parts.push('【本期事奉輪值表】：' + text.substring(Math.max(0, tableIdx - 150), tableIdx + 1200));
+              parts.push('【本期事奉輪值】：' + text.substring(Math.max(0, tableIdx - 100), tableIdx + (isLatest ? 700 : 350)));
             }
           }
           
           if (parts.length > 0) {
             roasterTexts[b.date] = parts.join('\n  ');
           } else {
-            roasterTexts[b.date] = text.slice(-2000);
+            roasterTexts[b.date] = text.slice(-800);
           }
         } catch (e) { /* 靜默忽略單篇失敗 */ }
       }));
@@ -602,11 +602,11 @@
 請依據下方提供的【歷期週報資料】來回答會友的詢問。
 回答守則：
 1. 語氣溫暖親切、尊重大方，使用繁體中文。
-2. 請仔細檢閱每期週報的【摘要】、【本週活動】以及【本期代禱事項與禱告園地】、【本期事奉輪值表】等資訊。
-3. 若會友詢問「代禱事項」或「禱告事項」，請優先由最新一期週報中的【代禱事項與禱告園地】詳細列出「教會代禱」、「社區宣教代禱」與「肢體代禱」內容，字體清晰分段，並提供當期週報連結。
-4. 若會友詢問某位兄姊的服事（如值週執事、值週長老、司會、主禮、司琴、音控、招待等），請在事奉輪值表中仔細查找，明確回報該兄姊在第幾期、哪一天擔任什麼服事職務。
-5. 提供連結時，請一律使用 Markdown 超連結語法（例如：[點此閱讀第 41 期週報](網址)），方便長者點擊。
-6. 盡量條理分明、簡明扼要，方便長者閱讀或聆聽。
+2. 請仔細檢閱每期週報的【摘要】、【本週活動】以及【本期代禱事項】、【本期事奉輪值】等資訊。
+3. 若會友詢問某位兄姊的服事（如值週執事、值週長老、司會、主禮、司琴、音控、招待等），請明確回報該兄姊在第幾期、哪一天擔任什麼服事。
+4. 若會友詢問代禱事項或消息，請條理分明列出核心重點，字體清晰，並提供當期週報連結。
+5. 提供連結時，請一律使用 Markdown 超連結語法（例如：[點此閱讀第 41 期週報](網址)）。
+6. 回答請條理分明、簡明扼要，控制在 400 字以內，方便長者閱讀或聆聽。
 7. 若資料中確實完全未提及或找不到相關紀錄，請誠懇告知並簡要列出最近一兩期的主題供會友參考。
 8. 排除所有奉獻金額與明細相關的詢問。
 
@@ -641,7 +641,7 @@ ${bulletinContext}`;
                   { role: 'user', content: query }
                 ],
                 temperature: 0.2,
-                max_tokens: 1500
+                max_tokens: 750
               })
             });
 
@@ -693,7 +693,7 @@ ${bulletinContext}`;
                   { role: 'user', content: query }
                 ],
                 temperature: 0.2,
-                max_tokens: 1500
+                max_tokens: 750
               })
             });
 
