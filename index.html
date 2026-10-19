@@ -78,8 +78,16 @@
         <button type="button" class="ai-close-btn" id="ai-close-btn" aria-label="關閉小幫手" title="關閉">✕</button>
       </div>
 
-      <!-- 快速快捷標籤 -->
+      <!-- 搜尋範圍選擇與快速快捷標籤 -->
       <div class="ai-quick-tags" id="ai-quick-tags">
+        <div class="ai-range-bar">
+          <label for="ai-search-range" class="ai-range-label">🔍 搜尋範圍：</label>
+          <select id="ai-search-range" class="ai-range-select" aria-label="選擇搜尋週報期數範圍">
+            <option value="2" selected>近 2 期（最快、最精準）</option>
+            <option value="5">近 5 期</option>
+            <option value="all">全部期數</option>
+          </select>
+        </div>
         <span class="ai-tag-tip">常見搜尋：</span>
         <button type="button" class="ai-tag-btn" onclick="askQuickPrompt('最新一期週報')">✨ 最新一期</button>
         <button type="button" class="ai-tag-btn" onclick="askQuickPrompt('牧師講道')">📖 牧師講道</button>
@@ -541,47 +549,53 @@
       appendMessage('user', escapeHTML(query));
       const loadingMsg = appendMessage('bot', '<span class="ai-typing">小幫手正在查閱週報資料中... 🕊️</span>');
 
-      // 預取最新 3 期完整週報事奉輪值表與精簡內文（精準控制字數，最新一期充裕、前兩期精簡，避免觸發 Groq ITPM/OTPM 限制）
-      const roasterTexts = {};
-      const recentBulletins = cachedBulletins.slice(0, 3);
-      await Promise.all(recentBulletins.map(async (b, idx) => {
-        if (!b.url) return;
-        try {
-          const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
-          const resp = await fetch(rawUrl, { cache: 'no-store' });
-          if (!resp.ok) return;
-          const html = await resp.text();
-          const cleanedHtml = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
-          const div = document.createElement('div');
-          div.innerHTML = cleanedHtml;
-          const text = (div.innerText || div.textContent || '').replace(/\s+/g, ' ').trim();
-          
-          const isLatest = idx === 0;
-          let parts = [];
-          
-          // 1. 代禱事項 / 禱告園地
-          const prayerIdx = text.indexOf('代禱事項') !== -1 ? text.indexOf('代禱事項') : text.indexOf('禱告園地');
-          if (prayerIdx !== -1) {
-            parts.push('【本期代禱事項】：' + text.substring(prayerIdx, prayerIdx + (isLatest ? 450 : 250)));
-          }
+      // 依使用者選取的範圍決定搜尋期數（預設近 2 期，或 5 期、全部）
+      const rangeVal = document.getElementById('ai-search-range')?.value || '2';
+      let targetBulletins = [];
+      if (rangeVal === '2') {
+        targetBulletins = cachedBulletins.slice(0, 2);
+      } else if (rangeVal === '5') {
+        targetBulletins = cachedBulletins.slice(0, 5);
+      } else {
+        targetBulletins = cachedBulletins.slice(0, 10); // 全部最多 10 期以維護速度
+      }
 
-          // 2. 事奉輪值表
-          const roasterIdx = text.indexOf('事奉輪值表');
-          if (roasterIdx !== -1) {
-            parts.push('【本期事奉輪值】：' + text.substring(roasterIdx, roasterIdx + (isLatest ? 800 : 450)));
-          } else {
-            const tableIdx = text.indexOf('值週');
-            if (tableIdx !== -1) {
-              parts.push('【本期事奉輪值】：' + text.substring(Math.max(0, tableIdx - 100), tableIdx + (isLatest ? 700 : 350)));
+      // 方案 B：優先直接讀取 JSON Index 中的 prayerText / roasterText 快取（零延遲、免額外 fetch）
+      // 若舊資料尚未補填快取，才啟動單篇輕量 fallback 抓取
+      const roasterTexts = {};
+      await Promise.all(targetBulletins.map(async (b, idx) => {
+        if (!b) return;
+        const isLatest = idx === 0;
+
+        // 若 JSON 已有快取，直接採用
+        if (b.prayerText || b.roasterText) {
+          const parts = [];
+          if (b.prayerText) parts.push('【本期代禱事項】：' + b.prayerText.substring(0, isLatest ? 450 : 250));
+          if (b.roasterText) parts.push('【本期事奉輪值】：' + b.roasterText.substring(0, isLatest ? 800 : 450));
+          roasterTexts[b.date] = parts.join('\n  ');
+          return;
+        }
+
+        // Fallback 保護機制：僅對缺少快取的前 2 期進行輕量即時補抓
+        if (idx < 2 && b.url) {
+          try {
+            const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
+            const resp = await fetch(rawUrl, { cache: 'no-store' });
+            if (!resp.ok) return;
+            const html = await resp.text();
+            const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            const parts = [];
+            const pIdx = clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地');
+            if (pIdx !== -1) parts.push('【本期代禱事項】：' + clean.substring(pIdx, pIdx + (isLatest ? 450 : 250)));
+            const rIdx = clean.indexOf('事奉輪值表');
+            if (rIdx !== -1) parts.push('【本期事奉輪值】：' + clean.substring(rIdx, rIdx + (isLatest ? 800 : 450)));
+            else {
+              const tbIdx = clean.indexOf('值週');
+              if (tbIdx !== -1) parts.push('【本期事奉輪值】：' + clean.substring(Math.max(0, tbIdx - 100), tbIdx + (isLatest ? 700 : 350)));
             }
-          }
-          
-          if (parts.length > 0) {
-            roasterTexts[b.date] = parts.join('\n  ');
-          } else {
-            roasterTexts[b.date] = text.slice(-800);
-          }
-        } catch (e) { /* 靜默忽略單篇失敗 */ }
+            if (parts.length > 0) roasterTexts[b.date] = parts.join('\n  ');
+          } catch (e) {}
+        }
       }));
 
       // 步驟 1 (GitHub Pages 主力首選)：Groq 超高速引擎直連（每日 14,400 次免費額度，反應極速且穩定）
@@ -592,23 +606,21 @@
           '2026-10-18': ['2026德光教會「閱讀・以賽亞」講座 (https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform)', '2027年全年讀經靈修書籍代訂購 (https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header)', '德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)']
         };
 
-        const bulletinContext = cachedBulletins.slice(0, 5).map(b => {
+        const bulletinContext = targetBulletins.map(b => {
           const extraEvents = eventForms[b.date] ? `，本週活動：${eventForms[b.date].join('、')}` : '';
           const roasterInfo = roasterTexts[b.date] ? `\n  ${roasterTexts[b.date]}` : '';
           return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}${roasterInfo}`;
         }).join('\n\n');
 
-        const systemPrompt = `你是一位熱心、親切且溫暖的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
+        const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
 請依據下方提供的【歷期週報資料】來回答會友的詢問。
-回答守則：
-1. 語氣溫暖親切、尊重大方，使用繁體中文。
-2. 請仔細檢閱每期週報的【摘要】、【本週活動】以及【本期代禱事項】、【本期事奉輪值】等資訊。
-3. 若會友詢問某位兄姊的服事（如值週執事、值週長老、司會、主禮、司琴、音控、招待等），請明確回報該兄姊在第幾期、哪一天擔任什麼服事。
-4. 若會友詢問代禱事項或消息，請條理分明列出核心重點，字體清晰，並提供當期週報連結。
-5. 提供連結時，請一律使用 Markdown 超連結語法（例如：[點此閱讀第 41 期週報](網址)）。
-6. 回答請條理分明、簡明扼要，控制在 400 字以內，方便長者閱讀或聆聽。
-7. 若資料中確實完全未提及或找不到相關紀錄，請誠懇告知並簡要列出最近一兩期的主題供會友參考。
-8. 排除所有奉獻金額與明細相關的詢問。
+回答守則（極度重要）：
+1. 嚴禁冗長寒暄與客套話！直接切入重點，提供約 150 字精準、清晰的回答。
+2. 語氣尊重大方，使用台灣繁體中文。
+3. 若會友詢問某人服事、代禱或活動，精確列出【日期/期數】、【項目】與【內容】，排版清晰。
+4. 必須在回覆末尾附上當期週報的 Markdown 超連結（例如：[點此閱讀第 42 期週報](網址)），方便長者點閱。
+5. 若資料中完全未提及相關內容，請直接誠懇告知「查無相關消息」，不要編造或贅述無關內容。
+6. 排除所有奉獻金額與明細相關的詢問。
 
 【歷期週報資料】：
 ${bulletinContext}`;
@@ -672,12 +684,12 @@ ${bulletinContext}`;
       const apiKey = getGeminiKey();
       if (apiKey) {
         try {
-          const bulletinContext = cachedBulletins.slice(0, 5).map(b => {
+          const customContext = targetBulletins.map(b => {
             const roasterInfo = roasterTexts[b.date] ? `\n  【本期事奉輪值】：${roasterTexts[b.date]}` : '';
             return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || ''}，網址：${b.url}${roasterInfo}`;
           }).join('\n\n');
 
-          const systemPrompt = `你是德光長老教會週報 AI 小幫手。請用繁體中文根據下方資料回答：\n${bulletinContext}`;
+          const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」。請依資料提供約 150 字重點回答，嚴禁冗長寒暄，直接列出重點與 Markdown 連結：\n${customContext}`;
 
           if (apiKey.startsWith('gsk_')) {
             const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {

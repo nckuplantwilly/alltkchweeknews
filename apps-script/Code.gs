@@ -649,6 +649,11 @@ function repairPublishedWithoutGemini() {
         entry.url = result.previewUrl;
         changedIndex = true;
       }
+      if (result.prayerText !== undefined || result.roasterText !== undefined) {
+        entry.prayerText = result.prayerText || '';
+        entry.roasterText = result.roasterText || '';
+        changedIndex = true;
+      }
       markDateRepaired(entry.date);
       props.setProperty(REPAIR_CURSOR_KEY, entry.date);
       Logger.log('   ✓ ' + (result.changed ? '已寫回 Gist' : '內容已正確，僅核對網址'));
@@ -932,6 +937,8 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
   const uploaded     = upsertHtmlGist(finalHtml, gistFilename, gistTitle, githubToken, finalDate);
   Logger.log('       ✓ 公開網址：' + uploaded.previewUrl);
 
+  const keyTexts = extractKeyTextFromHtml(finalHtml);
+
   updateBulletinIndex({
     volume:      volume,
     issue:       issue,
@@ -940,8 +947,10 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
     url:         uploaded.previewUrl,
     date:        finalDate,
     publishedAt: finalDate + 'T00:00:00.000Z',
+    prayerText:  keyTexts.prayerText,
+    roasterText: keyTexts.roasterText
   }, githubToken);
-  Logger.log('       ✓ 歷期目錄索引已更新！');
+  Logger.log('       ✓ 歷期目錄索引已更新（含代禱與事奉內文快取）！');
   markFileState(file, finalDate);
 
   // ★ 發布成功，自動寄送 Email 通知
@@ -952,6 +961,39 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
     fileName: file.getName(),
     html: finalHtml
   });
+}
+
+/**
+ * 📝 從 HTML 中提取代禱事項與事奉輪值表純文字，存入目錄索引供 AI 高速檢索
+ */
+function extractKeyTextFromHtml(html) {
+  if (!html) return { prayerText: '', roasterText: '' };
+  
+  const clean = html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  let prayerText = '';
+  const prayerIdx = clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地');
+  if (prayerIdx !== -1) {
+    prayerText = clean.substring(prayerIdx, prayerIdx + 450).trim();
+  }
+
+  let roasterText = '';
+  const roasterIdx = clean.indexOf('事奉輪值表');
+  if (roasterIdx !== -1) {
+    roasterText = clean.substring(roasterIdx, roasterIdx + 800).trim();
+  } else {
+    const tableIdx = clean.indexOf('值週');
+    if (tableIdx !== -1) {
+      roasterText = clean.substring(Math.max(0, tableIdx - 100), tableIdx + 700).trim();
+    }
+  }
+
+  return { prayerText: prayerText, roasterText: roasterText };
 }
 
 /**
@@ -1148,11 +1190,58 @@ function repairOneIndexEntry(entry, pdfIndex, githubToken) {
   if (changed) {
     patchGistHtml(gistId, filename, finalHtml, githubToken);
   }
+  const keyTexts = extractKeyTextFromHtml(finalHtml);
   rememberGistId(entry.date, gistId);
   return {
     changed: changed,
-    previewUrl: toStablePreviewUrl(gistId, filename)
+    previewUrl: toStablePreviewUrl(gistId, filename),
+    prayerText: keyTexts.prayerText,
+    roasterText: keyTexts.roasterText
   };
+}
+
+/**
+ * ⚡ 一鍵為目前目錄已上架的所有週報回填【代禱事項】與【事奉輪值】內文快取至 JSON Index
+ * 完全不呼叫 Gemini API，速度快且不耗配額！
+ */
+function backfillKeyText() {
+  const props = PropertiesService.getScriptProperties();
+  const githubToken = props.getProperty('GITHUB_TOKEN');
+  if (!githubToken) {
+    Logger.log('❌ 尚未設定 GITHUB_TOKEN');
+    return;
+  }
+  const indexState = loadIndexGist(githubToken);
+  if (!indexState || !indexState.list || indexState.list.length === 0) {
+    Logger.log('❌ 找不到目錄 Gist 或目錄為空');
+    return;
+  }
+  Logger.log('=== 開始為歷期週報回填代禱與事奉內文快取（共 ' + indexState.list.length + ' 期）===');
+  let updatedCount = 0;
+  for (const entry of indexState.list) {
+    if (!entry || !entry.date) continue;
+    const gistId = parseGistIdFromPreviewUrl(entry.url) || getGistIdByDate(entry.date);
+    if (!gistId) {
+      Logger.log('⚠ ' + entry.date + ' 無法取得 Gist ID，跳過');
+      continue;
+    }
+    Logger.log('▶ 讀取 ' + entry.date + ' HTML...');
+    try {
+      const html = fetchGistHtml(gistId, githubToken);
+      if (html) {
+        const keyTexts = extractKeyTextFromHtml(html);
+        entry.prayerText = keyTexts.prayerText || '';
+        entry.roasterText = keyTexts.roasterText || '';
+        updatedCount++;
+        Logger.log('   ✓ 代禱 ' + entry.prayerText.length + ' 字，事奉 ' + entry.roasterText.length + ' 字');
+      }
+    } catch (e) {
+      Logger.log('   ❌ 讀取失敗：' + e.message);
+    }
+    Utilities.sleep(500);
+  }
+  saveIndexList(indexState, githubToken);
+  Logger.log('🎉 歷期目錄索引更新完畢！共更新 ' + updatedCount + ' 期週報。');
 }
 
 function callGeminiWithPdf(pdfBase64, fallbackDateStr, apiKey, extractedUrls) {
