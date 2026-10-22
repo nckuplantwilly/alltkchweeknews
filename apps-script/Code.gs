@@ -145,6 +145,13 @@ const KNOWN_ACTIVITY_BUTTONS = [
     href: 'https://forms.gle/cQdSLqTaKDy32J5b7',
     label: '社青＆兒主野外禮拜報名表',
     isOffering: false
+  },
+  {
+    keys: ['心靈成長工作坊', '走出心理遊戲迷霧'],
+    match: 'FAIpQLSedD1BhCrBeok3wkca2OlYP0lxGHxVoohlZUVzpT43fXvu2xA',
+    href: 'https://docs.google.com/forms/d/e/1FAIpQLSedD1BhCrBeok3wkca2OlYP0lxGHxVoohlZUVzpT43fXvu2xA/viewform',
+    label: '培育部「心靈成長工作坊」線上課程報名表',
+    isOffering: false
   }
 ];
 
