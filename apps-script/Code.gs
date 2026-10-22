@@ -2060,10 +2060,10 @@ function scanPlainUrlsFromText(rawContent, addUrl) {
 }
 
 function inflateFlateStreamsAndScan(rawContent, addUrl) {
-  const re = /\/Filter\s*(?:\[\s*)?\/FlateDecode[\s\S]{0,500}?stream\r?\n/g;
+  const re = /\/Filter\s*(?:\[\s*)?\/FlateDecode[\s\S]{0,500}?stream(?:\r\n|\n|\r)/g;
   let match;
   let count = 0;
-  while ((match = re.exec(rawContent)) !== null && count < 80) {
+  while ((match = re.exec(rawContent)) !== null && count < 300) {
     const start = match.index + match[0].length;
     const end = rawContent.indexOf('endstream', start);
     if (end < 0) continue;
@@ -2228,6 +2228,7 @@ function finalizeBulletinHtml(html, resolvedUrls) {
   out = fixBrokenAnchors(out, resolvedUrls);
   out = injectKeywordButtons(out);
   out = injectKnownMetaButtons(out);
+  out = injectMissingResolvedUrls(out, resolvedUrls);
   out = normalizeFooterLinks(out);
   out = stripOfferingLinks(out, resolvedUrls);
   out = injectAccessibilityAndTTS(out);
@@ -2455,6 +2456,74 @@ function injectKnownMetaButtons(html) {
  * 2. 徹底清除頁尾內部或外部遺留的重複、懸掛粉絲頁按鈕
  * 3. 確保 <footer> 內具備標準三大多按鈕：停車配置圖、教會粉絲頁、教會據點粉絲頁
  */
+/**
+ * ★ 全自動智慧按鈕防漏機制：
+ * 若從 PDF 成功抽出了有效超連結（或線上表單），但 Gemini 生成的 HTML 中卻漏掉了此連結，
+ * 本機制會自動比對內文相關段落並強制植入按鈕，杜絕任何按鈕遺漏！
+ */
+function injectMissingResolvedUrls(html, resolvedUrls) {
+  let out = html || '';
+  if (!resolvedUrls || !resolvedUrls.length) return out;
+
+  resolvedUrls.forEach(function (item) {
+    if (!item || !item.url || item.isOffering) return;
+    // 排除粉絲頁與停車圖等已由 normalizeFooterLinks 管理之固定項目
+    if (/facebook\.com|O56r6A/i.test(item.url)) return;
+
+    // 若 HTML 中已經含有此網址（不論是完整或前綴匹配），代表已有按鈕，不重複插入
+    if (out.indexOf(item.url) !== -1) return;
+    const urlStem = item.url.split('?')[0];
+    if (urlStem.length >= 25 && out.indexOf(urlStem) !== -1) return;
+
+    const label = item.label || '線上報名與詳情';
+    const cleanLabel = label.replace(/(線上|報名表|報名|課程|講座|活動|專頁|表單)/g, '').trim();
+
+    // 1. 優先尋找標題關鍵字匹配的段落
+    let matchIdx = -1;
+    if (cleanLabel && cleanLabel.length >= 2) {
+      matchIdx = out.indexOf(cleanLabel);
+    }
+
+    // 2. 若無精確標題匹配，尋找提及「報名/登記/QR Code/掃描」但尚未包含 <a> 按鈕的段落
+    if (matchIdx === -1) {
+      const pRegex = /<(p|li)>([\s\S]*?)<\/\1>/gi;
+      let pm;
+      while ((pm = pRegex.exec(out)) !== null) {
+        const pContent = pm[2];
+        if (/(報名|登記|QR\s*Code|掃描)/i.test(pContent) && !/<a\s+[^>]*href=/i.test(pContent)) {
+          if (!/歡迎索取|一樓副堂最後一扇門|代禱箱|奉獻/.test(pContent)) {
+            matchIdx = pm.index;
+            break;
+          }
+        }
+      }
+    }
+
+    const buttonHtml = '<p><a href="' + item.url + '" target="_blank" rel="noopener noreferrer" class="qr-link">' + label + '</a></p>';
+
+    if (matchIdx !== -1) {
+      const rest = out.slice(matchIdx);
+      const close = rest.match(/<\/(p|li|h[1-6]|div|td|blockquote|summary)>/i);
+      if (close) {
+        const at = matchIdx + close.index + close[0].length;
+        out = out.slice(0, at) + '\n' + buttonHtml + out.slice(at);
+        Logger.log('       ✓ [防漏機制] 已自動為 PDF 抽出網址補上按鈕：' + label + ' (' + item.url + ')');
+        return;
+      }
+    }
+
+    // 3. 若都對不上特定段落，自動插入於「教會消息」或「牧區消息」
+    const sectionMatch = out.match(/<summary[^>]*>(教會消息|牧區消息)<\/summary>/i);
+    if (sectionMatch) {
+      const at = sectionMatch.index + sectionMatch[0].length;
+      out = out.slice(0, at) + '\n' + buttonHtml + out.slice(at);
+      Logger.log('       ✓ [防漏機制] 已於消息章節自動補上按鈕：' + label);
+    }
+  });
+
+  return out;
+}
+
 function normalizeFooterLinks(html) {
   let out = String(html || '');
 
