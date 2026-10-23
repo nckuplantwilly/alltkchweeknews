@@ -560,42 +560,59 @@
         targetBulletins = cachedBulletins.slice(0, 10); // 全部最多 10 期以維護速度
       }
 
-      // 方案 B：優先直接讀取 JSON Index 中的 prayerText / roasterText 快取（零延遲、免額外 fetch）
-      // 若舊資料尚未補填快取，才啟動單篇輕量 fallback 抓取
-      const roasterTexts = {};
+      // 方案 B：讀取 JSON Index 快取（讀經進度 / 講道大綱 / 代禱事項 / 事奉輪值）
+      // 若 JSON 索引尚未收錄讀經進度或大綱，啟動即時輕量補抓
+      const detailedContextMap = {};
       await Promise.all(targetBulletins.map(async (b, idx) => {
         if (!b) return;
         const isLatest = idx === 0;
 
-        // 若 JSON 已有快取，直接採用
-        if (b.prayerText || b.roasterText) {
-          const parts = [];
-          if (b.prayerText) parts.push('【本期代禱事項】：' + b.prayerText.substring(0, isLatest ? 450 : 250));
-          if (b.roasterText) parts.push('【本期事奉輪值】：' + b.roasterText.substring(0, isLatest ? 800 : 450));
-          roasterTexts[b.date] = parts.join('\n  ');
-          return;
-        }
+        let readingText = b.readingText || '';
+        let sermonText = b.sermonText || '';
+        let prayerText = b.prayerText || '';
+        let roasterText = b.roasterText || '';
 
-        // Fallback 保護機制：僅對缺少快取的前 2 期進行輕量即時補抓
-        if (idx < 2 && b.url) {
+        // 若缺少讀經進度或大綱，向週報 HTML 即時補足
+        if ((!readingText || !sermonText) && b.url) {
           try {
             const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
             const resp = await fetch(rawUrl, { cache: 'no-store' });
-            if (!resp.ok) return;
-            const html = await resp.text();
-            const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            const parts = [];
-            const pIdx = clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地');
-            if (pIdx !== -1) parts.push('【本期代禱事項】：' + clean.substring(pIdx, pIdx + (isLatest ? 450 : 250)));
-            const rIdx = clean.indexOf('事奉輪值表');
-            if (rIdx !== -1) parts.push('【本期事奉輪值】：' + clean.substring(rIdx, rIdx + (isLatest ? 800 : 450)));
-            else {
-              const tbIdx = clean.indexOf('值週');
-              if (tbIdx !== -1) parts.push('【本期事奉輪值】：' + clean.substring(Math.max(0, tbIdx - 100), tbIdx + (isLatest ? 700 : 350)));
+            if (resp.ok) {
+              const html = await resp.text();
+              if (!readingText) {
+                const rdMatch = html.match(/全年讀經進度[：:]\s*(?:<\/strong>)?\s*([^<\n]+)/i);
+                if (rdMatch) readingText = rdMatch[1].trim();
+              }
+              if (!sermonText) {
+                const smMatch = html.match(/<(?:h[2-4]|summary|p)[^>]*>.*?(?:主日講道大綱|講道大綱|主日講道筆記).*?<\/(?:h[2-4]|summary|p)>([\s\S]{20,800}?)(?:<details|<h[2-3]|<!--|\n\n|$)/i);
+                if (smMatch) {
+                  sermonText = smMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, isLatest ? 300 : 180);
+                }
+              }
+              if (!prayerText) {
+                const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                const pIdx = clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地');
+                if (pIdx !== -1) prayerText = clean.substring(pIdx, pIdx + (isLatest ? 450 : 250)).trim();
+              }
+              if (!roasterText) {
+                const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                const rIdx = clean.indexOf('事奉輪值表');
+                if (rIdx !== -1) roasterText = clean.substring(rIdx, rIdx + (isLatest ? 800 : 450)).trim();
+                else {
+                  const tbIdx = clean.indexOf('值週');
+                  if (tbIdx !== -1) roasterText = clean.substring(Math.max(0, tbIdx - 100), tbIdx + (isLatest ? 700 : 350)).trim();
+                }
+              }
             }
-            if (parts.length > 0) roasterTexts[b.date] = parts.join('\n  ');
           } catch (e) {}
         }
+
+        const parts = [];
+        if (readingText) parts.push('【本期全年讀經進度】：' + readingText);
+        if (sermonText) parts.push('【本期講道大綱與經文】：' + sermonText);
+        if (prayerText) parts.push('【本期代禱事項】：' + prayerText.substring(0, isLatest ? 450 : 250));
+        if (roasterText) parts.push('【本期事奉輪值】：' + roasterText.substring(0, isLatest ? 800 : 450));
+        if (parts.length > 0) detailedContextMap[b.date] = parts.join('\n  ');
       }));
 
       // 步驟 1 (GitHub Pages 主力首選)：Groq 超高速引擎直連（每日 14,400 次免費額度，反應極速且穩定）
@@ -609,8 +626,8 @@
 
         const bulletinContext = targetBulletins.map(b => {
           const extraEvents = eventForms[b.date] ? `，本週活動：${eventForms[b.date].join('、')}` : '';
-          const roasterInfo = roasterTexts[b.date] ? `\n  ${roasterTexts[b.date]}` : '';
-          return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}${roasterInfo}`;
+          const detailInfo = detailedContextMap[b.date] ? `\n  ${detailedContextMap[b.date]}` : '';
+          return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}${detailInfo}`;
         }).join('\n\n');
 
         const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
@@ -686,8 +703,8 @@ ${bulletinContext}`;
       if (apiKey) {
         try {
           const customContext = targetBulletins.map(b => {
-            const roasterInfo = roasterTexts[b.date] ? `\n  【本期事奉輪值】：${roasterTexts[b.date]}` : '';
-            return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || ''}，網址：${b.url}${roasterInfo}`;
+            const detailInfo = detailedContextMap[b.date] ? `\n  【本期事奉輪值】：${detailedContextMap[b.date]}` : '';
+            return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || ''}，網址：${b.url}${detailInfo}`;
           }).join('\n\n');
 
           const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」。請依資料提供約 150 字重點回答，嚴禁冗長寒暄，直接列出重點與 Markdown 連結：\n${customContext}`;
@@ -793,11 +810,15 @@ ${bulletinContext}`;
         const title = (b.title || '').toLowerCase();
         const summary = (b.summary || '').toLowerCase();
         const date = (b.date || '').toLowerCase();
+        const readingText = (b.readingText || '').toLowerCase();
+        const sermonText = (b.sermonText || '').toLowerCase();
 
         // 關鍵字比對權重
         if (title.includes(q)) score += 10;
         if (summary.includes(q)) score += 8;
         if (date.includes(q)) score += 6;
+        if (readingText.includes(q)) score += 30;
+        if (sermonText.includes(q)) score += 20;
 
         // 常見意圖比對與同義詞擴展
         if (q.includes('最新') && b === cachedBulletins[0]) score += 20;

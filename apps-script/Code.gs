@@ -656,7 +656,9 @@ function repairPublishedWithoutGemini() {
         entry.url = result.previewUrl;
         changedIndex = true;
       }
-      if (result.prayerText !== undefined || result.roasterText !== undefined) {
+      if (result.prayerText !== undefined || result.roasterText !== undefined || result.readingText !== undefined || result.sermonText !== undefined) {
+        entry.readingText = result.readingText || '';
+        entry.sermonText = result.sermonText || '';
         entry.prayerText = result.prayerText || '';
         entry.roasterText = result.roasterText || '';
         changedIndex = true;
@@ -954,6 +956,8 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
     url:         uploaded.previewUrl,
     date:        finalDate,
     publishedAt: finalDate + 'T00:00:00.000Z',
+    readingText: keyTexts.readingText,
+    sermonText:  keyTexts.sermonText,
     prayerText:  keyTexts.prayerText,
     roasterText: keyTexts.roasterText
   }, githubToken);
@@ -974,8 +978,22 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
  * 📝 從 HTML 中提取代禱事項與事奉輪值表純文字，存入目錄索引供 AI 高速檢索
  */
 function extractKeyTextFromHtml(html) {
-  if (!html) return { prayerText: '', roasterText: '' };
+  if (!html) return { readingText: '', sermonText: '', prayerText: '', roasterText: '' };
   
+  // 1. 全年讀經進度
+  let readingText = '';
+  const rdMatch = html.match(/全年讀經進度[：:]\s*(?:<\/strong>)?\s*([^<\n]+)/i);
+  if (rdMatch) {
+    readingText = rdMatch[1].trim();
+  }
+
+  // 2. 講道大綱與經文要點
+  let sermonText = '';
+  const smMatch = html.match(/<(?:h[2-4]|summary|p)[^>]*>.*?(?:主日講道大綱|講道大綱|主日講道筆記).*?<\/(?:h[2-4]|summary|p)>([\s\S]{20,800}?)(?:<details|<h[2-3]|<!--|\n\n|$)/i);
+  if (smMatch) {
+    sermonText = smMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 300);
+  }
+
   const clean = html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -983,12 +1001,14 @@ function extractKeyTextFromHtml(html) {
     .replace(/\s+/g, ' ')
     .trim();
 
+  // 3. 代禱事項
   let prayerText = '';
   const prayerIdx = clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地');
   if (prayerIdx !== -1) {
     prayerText = clean.substring(prayerIdx, prayerIdx + 450).trim();
   }
 
+  // 4. 事奉輪值表
   let roasterText = '';
   const roasterIdx = clean.indexOf('事奉輪值表');
   if (roasterIdx !== -1) {
@@ -1000,7 +1020,12 @@ function extractKeyTextFromHtml(html) {
     }
   }
 
-  return { prayerText: prayerText, roasterText: roasterText };
+  return {
+    readingText: readingText,
+    sermonText:  sermonText,
+    prayerText:  prayerText,
+    roasterText: roasterText
+  };
 }
 
 /**
@@ -1202,6 +1227,8 @@ function repairOneIndexEntry(entry, pdfIndex, githubToken) {
   return {
     changed: changed,
     previewUrl: toStablePreviewUrl(gistId, filename),
+    readingText: keyTexts.readingText,
+    sermonText: keyTexts.sermonText,
     prayerText: keyTexts.prayerText,
     roasterText: keyTexts.roasterText
   };
@@ -1237,10 +1264,12 @@ function backfillKeyText() {
       const html = fetchGistHtml(gistId, githubToken);
       if (html) {
         const keyTexts = extractKeyTextFromHtml(html);
+        entry.readingText = keyTexts.readingText || '';
+        entry.sermonText = keyTexts.sermonText || '';
         entry.prayerText = keyTexts.prayerText || '';
         entry.roasterText = keyTexts.roasterText || '';
         updatedCount++;
-        Logger.log('   ✓ 代禱 ' + entry.prayerText.length + ' 字，事奉 ' + entry.roasterText.length + ' 字');
+        Logger.log('   ✓ 讀經：' + (entry.readingText ? entry.readingText.substring(0, 25) : '無') + '，代禱 ' + entry.prayerText.length + ' 字，事奉 ' + entry.roasterText.length + ' 字');
       }
     } catch (e) {
       Logger.log('   ❌ 讀取失敗：' + e.message);
