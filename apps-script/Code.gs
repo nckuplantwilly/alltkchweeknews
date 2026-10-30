@@ -267,6 +267,8 @@ const CHURCH_ROSTER = [
 
 /** 長詞優先，避免部分替換造成二次錯字。單字簡轉繁放最後。 */
 const TYPO_FIXES = [
+  ['頌榮：五二二首', '頌榮：五一三首'],
+  ['聖詩：三二五首', '聖詩：三三五首'],
   ['業界消息', '教界消息'],
   ['界界消息', '教界消息'],
   ['教教消息', '教界消息'],
@@ -357,7 +359,7 @@ const TYPO_FIXES = [
   ['说', '說']
 ];
 
-const JUNK_URL_RE = /w3\.org|adobe\.com|purl\.org|color\.org|npes\.org|xml\.org|microsoft\.com|apple\.com\/DTDs|schemas\.openxmlformats|ns\.adobe|xmp\.iid|xmp\.did|pdfa\.org|ci\.org|iptc\.org|plus\.google\.com\/u\/0\/_/i;
+const JUNK_URL_RE = /w3\.org|adobe\.com|purl\.org|color\.org|npes\.org|xml\.org|microsoft\.com|apple\.com\/DTDs|schemas\.openxmlformats|ns\.adobe|xmp\.iid|xmp\.did|pdfa\.org|ci\.org|iptc\.org|plus\.google\.com\/u\/0\/_|iec\.ch|icc\.org|eci\.org|iso\.org|pantone\.com|monotype\.com|linotype\.com/i;
 const PLACEHOLDER_HREF_RE = /^(#|https?:\/\/(www\.)?example\.com\/?|https?:\/\/lin\.ee\/example|https?:\/\/example\.org\/?|javascript:void\(0\)?)$/i;
 
 // ============================================================
@@ -1181,6 +1183,19 @@ function repairIssue42() {
   Logger.log('=== 專門補修第 42 期（2026-10-18）連結 ===');
   repairOneDate('2026-10-18');
   Logger.log('🎉 第 42 期補修完畢！請重新整理歷期週報網站確認。');
+}
+
+/**
+ * 🛠️ 專門一鍵修復第 44 期（2026-11-01）
+ * 1. 移除誤植的 ICC 規範連結 (http://www.iec.ch)
+ * 2. 修正禮拜程序中的聖詩曲目（三二五首 -> 三三五首）
+ * 3. 修正禮拜程序中的頌榮曲目（五二二首 -> 五一三首）
+ * 0 消耗 Gemini 配額！
+ */
+function repairIssue44() {
+  Logger.log('=== 專門補修第 44 期（2026-11-01）===');
+  repairOneDate('2026-11-01');
+  Logger.log('🎉 第 44 期補修完畢！請重新整理週報網頁確認。');
 }
 
 function backupPdfToPersonal(file, replaceBackup) {
@@ -2179,6 +2194,7 @@ function isUsefulBulletinUrl(u) {
   if (!/^https?:\/\//i.test(u)) return false;
   if (JUNK_URL_RE.test(u)) return false;
   if (PLACEHOLDER_HREF_RE.test(u)) return false;
+  if (/iec\.ch|w3\.org|adobe\.com|color\.org|schema\.org/i.test(u)) return false;
   return true;
 }
 
@@ -2261,6 +2277,7 @@ function finalizeBulletinHtml(html, resolvedUrls) {
   out = injectKeywordButtons(out);
   out = injectKnownMetaButtons(out);
   out = injectMissingResolvedUrls(out, resolvedUrls);
+  out = stripJunkLinks(out);
   out = normalizeFooterLinks(out);
   out = stripOfferingLinks(out, resolvedUrls);
   out = injectAccessibilityAndTTS(out);
@@ -2499,8 +2516,9 @@ function injectMissingResolvedUrls(html, resolvedUrls) {
 
   resolvedUrls.forEach(function (item) {
     if (!item || !item.url || item.isOffering) return;
-    // 排除粉絲頁與停車圖等已由 normalizeFooterLinks 管理之固定項目
-    if (/facebook\.com|O56r6A/i.test(item.url)) return;
+    // 排除粉絲頁與停車圖等已由 normalizeFooterLinks 管理之固定項目，及技術垃圾網址
+    if (/facebook\.com|O56r6A|iec\.ch|w3\.org|adobe\.com/i.test(item.url)) return;
+    if (JUNK_URL_RE.test(item.url)) return;
 
     // 若 HTML 中已經含有此網址（不論是完整或前綴匹配），代表已有按鈕，不重複插入
     if (out.indexOf(item.url) !== -1) return;
@@ -2584,6 +2602,15 @@ function normalizeFooterLinks(html) {
     });
   }
 
+  return out;
+}
+
+
+function stripJunkLinks(html) {
+  let out = html || '';
+  // 徹底移除連向 JUNK_URL_RE（如 iec.ch、adobe.com 等）的超連結標籤或段落
+  out = out.replace(/<p\b[^>]*>\s*<a\b[^>]*href=["'][^"']*(iec\.ch|w3\.org|adobe\.com|color\.org)[^"']*["'][^>]*>[\s\S]*?<\/a>\s*<\/p>/gi, '');
+  out = out.replace(/<a\b[^>]*href=["'][^"']*(iec\.ch|w3\.org|adobe\.com|color\.org)[^"']*["'][^>]*>[\s\S]*?<\/a>/gi, '');
   return out;
 }
 
