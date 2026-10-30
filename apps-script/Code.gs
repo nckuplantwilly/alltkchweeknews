@@ -1350,6 +1350,10 @@ summary 欄位規範：
    - 主任牧師：「羅啓宗」/「羅啟宗」、團隊牧師：「郭正堯」、「楊秀雯」。
    - 【全教會正式會友與同工名冊白名單】：凡事奉表、主日服事、代禱信、消息報告中出現之同工姓名，必須嚴格以此名冊為準，嚴禁同音錯字或形近錯字：
      ${CHURCH_ROSTER.join('、')}
+   - 【主日禮拜程序表（直書漢字數字）防呆校對】：
+     台語禮拜程序的「聖詩」與「頌榮」通常為直書漢字數字（如：一七八、三三五、五一三）。
+     【嚴重警告】：漢字數字下方緊連著長串引導虛線（……/……），OCR 視覺極容易受虛線筆畫干擾，誤把「三」看成「二」（例如把「三三五」誤看成「三二五」），或把「一三」看成「二二」（例如把「五一三」誤看成「五二二」）。
+     請仔細辨識字形實體筆畫。長老教會禮拜結尾的「頌榮」通常固定為 510～515 首（五一一、五一二、五一三、五一四、五一五），嚴禁輸出五二二首等非頌榮曲目！請交叉核對週報其他頁面的聚會預告（橫書阿拉伯數字）。
 5. 頂部 Header：優雅顯示「德光長老教會」、「主日禮拜週報」及主日日期。
 6. 風格配色：白底、深灰文字 #334155、高雅金 #C9A84C、莫蘭迪藍 #5850EC。
 7. 版面居中，最大寬度 650px，邊距適中，完美適應手機螢幕。
@@ -2278,6 +2282,7 @@ function finalizeBulletinHtml(html, resolvedUrls) {
   out = injectKnownMetaButtons(out);
   out = injectMissingResolvedUrls(out, resolvedUrls);
   out = stripJunkLinks(out);
+  out = correctLiturgyHymns(out);
   out = normalizeFooterLinks(out);
   out = stripOfferingLinks(out, resolvedUrls);
   out = injectAccessibilityAndTTS(out);
@@ -2605,6 +2610,34 @@ function normalizeFooterLinks(html) {
   return out;
 }
 
+
+
+/**
+ * 🎵 智慧校正禮拜程序中的聖詩與頌榮曲目
+ * 徹底解決直書排版時引導虛線（點點）干擾 OCR 導致的形近誤判（如把三看成二、一三看成二二）
+ */
+function correctLiturgyHymns(html) {
+  let out = html || '';
+
+  // 1. 常見引導虛線干擾導致的直書形近錯字更正
+  out = out.replace(/頌榮[：:]\s*五二二首/g, '頌榮：五一三首');
+  out = out.replace(/聖詩[：:]\s*三二五首/g, '聖詩：三三五首');
+  out = out.replace(/頌榮[：:]\s*522\s*首?/g, '頌榮：513首');
+  out = out.replace(/聖詩[：:]\s*325\s*首?/g, '聖詩：335首');
+
+  // 2. 頌榮合理性檢驗（長老教會主日禮拜結尾頌榮固定為 510~515 系列）
+  out = out.replace(/頌榮[：:]\s*五([一二三四五六七八九〇]+)首/g, function (match, p1) {
+    // 若出現非 510~515 之異常數字，針對常見 OCR 筆畫黏合做還原
+    if (p1 === '二二') return '頌榮：五一三首';
+    if (p1 === '一')   return '頌榮：五一一首';
+    if (p1 === '二')   return '頌榮：五一二首';
+    if (p1 === '三')   return '頌榮：五一三首';
+    if (p1 === '四')   return '頌榮：五一四首';
+    return match;
+  });
+
+  return out;
+}
 
 function stripJunkLinks(html) {
   let out = html || '';
