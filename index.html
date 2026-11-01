@@ -592,7 +592,7 @@
               if (!prayerText) {
                 const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
                 const pIdx = clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地');
-                if (pIdx !== -1) prayerText = clean.substring(pIdx, pIdx + (isLatest ? 450 : 250)).trim();
+                if (pIdx !== -1) prayerText = clean.substring(pIdx, pIdx + (isLatest ? 2800 : 600)).trim();
               }
               if (!roasterText) {
                 const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -610,7 +610,7 @@
         const parts = [];
         if (readingText) parts.push('【本期全年讀經進度】：' + readingText);
         if (sermonText) parts.push('【本期講道大綱與經文】：' + sermonText);
-        if (prayerText) parts.push('【本期代禱事項】：' + prayerText.substring(0, isLatest ? 450 : 250));
+        if (prayerText) parts.push('【本期代禱事項】：' + prayerText.substring(0, isLatest ? 2800 : 600));
         if (roasterText) parts.push('【本期事奉輪值】：' + roasterText.substring(0, isLatest ? 800 : 450));
         if (parts.length > 0) detailedContextMap[b.date] = parts.join('\n  ');
       }));
