@@ -1005,9 +1005,9 @@ function extractKeyTextFromHtml(html) {
 
   // 3. 代禱事項
   let prayerText = '';
-  const prayerIdx = clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地');
+  const prayerIdx = clean.indexOf('教會消息') !== -1 ? clean.indexOf('教會消息') : (clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地'));
   if (prayerIdx !== -1) {
-    prayerText = clean.substring(prayerIdx, prayerIdx + 450).trim();
+    prayerText = clean.substring(prayerIdx, prayerIdx + 2800).trim(); // 含教會消息最多 10 點，需 2800 字
   }
 
   // 4. 事奉輪值表
