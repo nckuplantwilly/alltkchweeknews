@@ -572,8 +572,9 @@
         let prayerText = b.prayerText || '';
         let roasterText = b.roasterText || '';
 
-        // 若缺少讀經進度或大綱，向週報 HTML 即時補足
-        if ((!readingText || !sermonText) && b.url) {
+        // 若缺少讀經/大綱，或 prayerText 過短（舊快取截斷），向週報 HTML 即時補足
+        const prayerTooShort = prayerText.length > 0 && prayerText.length < 800;
+        if ((!readingText || !sermonText || !prayerText || prayerTooShort) && b.url) {
           try {
             const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
             const resp = await fetch(rawUrl, { cache: 'no-store' });
@@ -589,7 +590,9 @@
                   sermonText = smMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, isLatest ? 300 : 180);
                 }
               }
-              if (!prayerText) {
+              // prayerText 空白或舊快取過短（< 800 字），一律從 HTML 重新抓
+
+              if (!prayerText || prayerTooShort) {
                 const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
                 const pIdx = clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地');
                 if (pIdx !== -1) prayerText = clean.substring(pIdx, pIdx + (isLatest ? 2800 : 600)).trim();
