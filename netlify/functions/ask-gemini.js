@@ -12,9 +12,8 @@ exports.handler = async function (event, context) {
     };
   }
 
-  // 支援環境變數 GROQ_API_KEY，亦有備援組合字串
-  const fallbackGroq = ['gsk_', 'R3BbwbobQaWgh8XZ', 'ZDxpWGdyb3FYhxyN', '7i7d5zrhl4o4P4tL8WJH'].join('');
-  const groqApiKey = process.env.GROQ_API_KEY || fallbackGroq;
+  // Groq Key 由環境變數提供（不在程式碼中硬寫）
+  const groqApiKey = process.env.GROQ_API_KEY || '';
   const geminiApiKey = process.env.GEMINI_API_KEY || '';
 
   if (!groqApiKey && !geminiApiKey) {

@@ -3,6 +3,133 @@
  * 德光長老教會 週報自動化處理系統 (v4.1)
  * Google Apps Script
  *
+ * ┌─────────────────────────────────────────────────────────┐
+ * │  📖 函數目錄索引（Ctrl+F 搜尋函數名即可快速跳轉）       │
+ * ├─────────────────────────────────────────────────────────┤
+ * │                                                         │
+ * │  ⚙️ 設定與常數                                   ~L154  │
+ * │    DEACON_FOLDER_ID, GEMINI_MODELS,                     │
+ * │    KNOWN_ACTIVITY_BUTTONS, KNOWN_URL_META ...           │
+ * │                                                         │
+ * │  ★ 定時排程                                      ~L497  │
+ * │    scheduledTick()              排程主入口               │
+ * │    installScheduleTriggers()    安裝排程                 │
+ * │    removeScheduleTriggers()     移除排程                 │
+ * │    listScheduleTriggers()       列出排程                 │
+ * │                                                         │
+ * │  ★ 主要處理入口                                  ~L575  │
+ * │    checkAndProcessNewBulletins() 檢查並處理新週報        │
+ * │    shouldAutoPublish()          判斷是否自動發布         │
+ * │    groupPdfsByDate()            依日期分組 PDF           │
+ * │    pickNewestPdf()              選最新 PDF               │
+ * │    getFileState/saveFileState/markFileState()            │
+ * │    findFileStateByDate()        依日期查處理狀態         │
+ * │    detectPdfChangeReason()      偵測 PDF 變更原因        │
+ * │                                                         │
+ * │  🔧 修復與回補                                   ~L744  │
+ * │    repairPublishedWithoutGemini() 批次修復舊週報         │
+ * │    previewPublishedIssues()     預覽已上架問題           │
+ * │    backfillUnpublishedSlowly()  慢速回補歷史週報         │
+ * │    repairOneDate()              修復單一日期             │
+ * │    repairCurrentIssues()        一鍵修復目前週報         │
+ * │    resetRepairCursor()          重設修復游標             │
+ * │    startTestingPeriod()         進入測試期               │
+ * │    keepOnlyWebsiteDates()       僅保留指定日期           │
+ * │    reprocessDateWithGemini()    指定日期重跑 Gemini      │
+ * │    findPdfForDate()             依日期找 PDF             │
+ * │    getAllPdfFilesRecursive()     遞迴取所有 PDF           │
+ * │                                                         │
+ * │  📄 核心轉檔管線                                ~L1022  │
+ * │    processOneBulletin()         處理單份週報（主管線）   │
+ * │    extractKeyTextFromHtml()     擷取 HTML 關鍵文字       │
+ * │    inspectHtmlLinksAndWarnings() 檢查 HTML 連結品質      │
+ * │    sendPublishNotification()    發送上架通知 Email       │
+ * │    testEmailNotification()      測試 Email               │
+ * │                                                         │
+ * │  🤖 Gemini AI                                   ~L1480  │
+ * │    callGeminiWithPdf()          呼叫 Gemini 轉檔         │
+ * │    buildUrlsContext()           組建 URL 提示語          │
+ * │    parseGeminiResponse()        解析 Gemini 回應         │
+ * │                                                         │
+ * │  📦 GitHub Gist                                 ~L1708  │
+ * │    githubHeaders()              GitHub 認證標頭          │
+ * │    listAllUserGists()           列出所有 Gist            │
+ * │    upsertHtmlGist()             建立/更新 HTML Gist      │
+ * │    patchGistHtml()              局部更新 Gist            │
+ * │    fetchGistHtml()              取得 Gist HTML           │
+ * │    findIndexGist/loadIndexGist/saveIndexList()           │
+ * │    updateBulletinIndex()        更新週報索引             │
+ * │    sortCurrentIndexGist()       排序索引                 │
+ * │    dedupeDuplicateGists()       清除重複 Gist            │
+ * │                                                         │
+ * │  🔑 狀態與金鑰                                  ~L1990  │
+ * │    getProcessedIds/markAsProcessed()                    │
+ * │    getRepairedDates/markDateRepaired()                   │
+ * │    clearProcessedHistory()      清除處理記錄             │
+ * │    isGeminiCoolingDown()        Gemini 冷卻檢查          │
+ * │    setupApiKeys()               設定 API 金鑰           │
+ * │    testGeminiConnection()       測試 Gemini 連線         │
+ * │                                                         │
+ * │  🩺 診斷工具                                    ~L2076  │
+ * │    diagnoseLatestPdf()          診斷最新 PDF             │
+ * │    reprocessLatestBulletin()    重新處理最新週報         │
+ * │    buildPdfDateIndex()          建立 PDF 日期索引        │
+ * │    detectHtmlIssues()           偵測 HTML 問題           │
+ * │    unique()                     陣列去重                 │
+ * │                                                         │
+ * │  ⚡ PDF 瘦身                                    ~L2235  │
+ * │    slimPdfBlobBytes()           PDF 智能瘦身             │
+ * │    rebuildPdfXrefTable()        重建 PDF xref 表         │
+ * │                                                         │
+ * │  🔲 QR Code 掃描                                ~L2362  │
+ * │    scanQrCodesWithGemini()      Gemini 視覺掃描 QR Code  │
+ * │                                                         │
+ * │  🔗 PDF 超連結抽取                               ~L2510  │
+ * │    extractUrlsFromPdf()         主抽取函數               │
+ * │    scanPdfUriLiterals()         掃描 /URI 字面值         │
+ * │    readPdfLiteralString()       讀取 PDF 字串            │
+ * │    unescapePdfLiteral()         反跳脫 PDF 字串          │
+ * │    scanPdfUriHex()              掃描 /URI 十六進位       │
+ * │    hexToString()                十六進位轉字串           │
+ * │    scanPlainUrlsFromText()      掃描明文 URL             │
+ * │    inflateFlateStreamsAndScan()  解壓串流並掃描           │
+ * │    inflateZlibLatin1()          Zlib 解壓縮              │
+ * │    decodePercentEncoding()      解碼百分比編碼           │
+ * │    normalizeExtractedUrl()      正規化 URL               │
+ * │    isUsefulBulletinUrl()        判斷有效週報 URL          │
+ * │    resolveUrlsMetadata()        解析 URL 中繼資料        │
+ * │    fetchPageTitle()             抓取網頁標題             │
+ * │                                                         │
+ * │  ✏️ HTML 後處理                                  ~L2781  │
+ * │    finalizeBulletinHtml()       HTML 後處理主函數        │
+ * │    applyTypoFixes()             修正錯字                 │
+ * │    applyProperNounFixes()       修正專有名詞             │
+ * │    collectCanonicalUrls()       收集標準 URL             │
+ * │    findBestUrlMatch()           找最佳 URL 匹配          │
+ * │    mapLabelToUrl()              標籤對應 URL             │
+ * │    remapPlaceholderAnchors()    替換佔位連結             │
+ * │    fixBrokenAnchors()           修復壞連結               │
+ * │    injectKeywordButtons()       注入關鍵字按鈕           │
+ * │    injectKnownMetaButtons()     注入已知活動按鈕         │
+ * │    injectMissingResolvedUrls()  注入遺漏的解析 URL       │
+ * │    normalizeFooterLinks()       正規化頁尾連結           │
+ * │    correctLiturgyHymns()        修正禮拜程序詩歌         │
+ * │    stripJunkLinks()             移除垃圾連結             │
+ * │    stripOfferingLinks()         移除奉獻連結             │
+ * │    repairTruncatedHtml()        修復截斷的 HTML          │
+ * │    injectAccessibilityAndTTS()  注入無障礙與語音朗讀     │
+ * │                                                         │
+ * │  🗜️ Zlib 解壓引擎（fflate）                     ~L3585  │
+ * │                                                         │
+ * │  🌐 後台管理 Web App                            ~L3593  │
+ * │    doGet()                      Web App 入口            │
+ * │    getPublishedBulletins()      取得已上架週報列表       │
+ * │    addMissingButtonWithGemini() Gemini 智慧補按鈕        │
+ * │    addMissingButtonSimple()     快速補按鈕（備援）       │
+ * │    buildAdminPageHtml()         生成後台 HTML            │
+ * │                                                         │
+ * └─────────────────────────────────────────────────────────┘
+ *
  * v4 針對實際營運的兩個問題：
  *
  *  1. 舊週報已上架，但連結不正確（href="#"、lin.ee/example、
@@ -80,9 +207,9 @@ const SCHEDULE_HANDLER = 'scheduledTick';
 const BACKFILL_HOUR = 20;
 
 const GEMINI_MODELS = [
-  'gemini-flash-latest',
-  'gemini-flash-lite-latest',
-  'gemini-pro-latest'
+  'gemini-flash-latest',       // ★ 最新一代 Flash（自動對應可用版本）
+  'gemini-flash-lite-latest',  // 輕量版 Flash-Lite
+  'gemini-pro-latest'          // 最強推理 Pro（較慢，作為備援）
 ];
 
 /**
@@ -507,13 +634,15 @@ function checkAndProcessNewBulletins() {
   jobs.sort(function (a, b) { return b.date.localeCompare(a.date); });
   const toProcess = jobs.slice(0, GEMINI_BATCH_LIMIT);
   Logger.log('📄 待處理：' + jobs.length + ' 期，本次 ' + toProcess.length + ' 期');
+  const taskStartTime = Date.now();
   for (const job of toProcess) {
     Logger.log('\n----------------------------------------');
     Logger.log('▶ ' + job.file.getName() + '（' + job.reason + '）');
     try {
       processOneBulletin(job.file, GEMINI_API_KEY, GITHUB_TOKEN, {
         useGemini: true,
-        replaceBackup: job.reason !== 'new'
+        replaceBackup: job.reason !== 'new',
+        taskStartTime: taskStartTime
       });
       markAsProcessed(job.file.getId());
       markFileState(job.file, job.date);
@@ -901,6 +1030,7 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
   options = options || {};
   const useGemini = options.useGemini !== false;
   const replaceBackup = !!options.replaceBackup;
+  const taskStartTime = options.taskStartTime || Date.now();
 
   Logger.log('  [1/6] 複製備份至個人資料夾...');
   backupPdfToPersonal(file, replaceBackup);
@@ -908,23 +1038,77 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
   Logger.log('  [2/6] 讀取 PDF 並抽取原始超連結...');
   const pdfBytes  = file.getBlob().getBytes();
   const pdfBase64 = Utilities.base64Encode(pdfBytes);
-  Logger.log('       ✓ PDF 大小：' + Math.round(pdfBytes.length / 1024) + ' KB');
+  Logger.log('       ✓ 原始 PDF 大小：' + Math.round(pdfBytes.length / 1024) + ' KB');
 
+  // ★ 100% 保留從原始完整 PDF 抽取超連結與 QR Code 註解（不受後續圖片精簡影響）
   const extractedUrls = extractUrlsFromPdf(file);
-  Logger.log('       ✓ 從 PDF 抽取真實網址數：' + extractedUrls.length + ' 個');
+  Logger.log('       ✓ 從原始 PDF 抽取真實網址數：' + extractedUrls.length + ' 個');
   if (extractedUrls.length > 0) {
     Logger.log('         真實連結清單：\n         ' + extractedUrls.join('\n         '));
   } else {
     Logger.log('       ⚠ 註解層沒有抽到網址（可能是 QR 圖而不是 PDF 超連結）。將改以關鍵字強制放入常設按鈕。');
   }
 
+  // ★ Gemini 視覺掃描 QR Code：補抓幹事忘記加超連結的 QR Code 圖片
+  Logger.log('       🔲 啟動 Gemini 視覺掃描 QR Code...');
+  var qrUrls = [];
+  try {
+    qrUrls = scanQrCodesWithGemini(pdfBase64, geminiApiKey);
+    if (qrUrls.length > 0) {
+      // 合併去重：只加入 annotation 層沒抽到的新網址
+      var existingSet = {};
+      for (var ei = 0; ei < extractedUrls.length; ei++) existingSet[extractedUrls[ei]] = true;
+      var newCount = 0;
+      for (var qi = 0; qi < qrUrls.length; qi++) {
+        if (!existingSet[qrUrls[qi]]) {
+          extractedUrls.push(qrUrls[qi]);
+          existingSet[qrUrls[qi]] = true;
+          newCount++;
+        }
+      }
+      Logger.log('       ✓ QR 掃描新增 ' + newCount + ' 個 annotation 層未涵蓋的網址（合併後共 ' + extractedUrls.length + ' 個）');
+      if (newCount > 0) {
+        var addedUrls = [];
+        for (var ai = 0; ai < qrUrls.length; ai++) {
+          // 列出所有 QR 掃描結果（含已存在的，方便 log 對照）
+          addedUrls.push(qrUrls[ai]);
+        }
+        Logger.log('         QR 掃描完整清單：\n         ' + addedUrls.join('\n         '));
+      }
+    }
+  } catch (qrErr) {
+    Logger.log('       ⚠️ QR 掃描過程略過：' + qrErr.message);
+  }
+
   const fallbackDateStr = extractDateFromFilename(file.getName());
   Logger.log('  [3/6] 檔名推估日期：' + fallbackDateStr);
+
+  // ★ 方案 C：執行時間防禦（避免在接近 360 秒硬上限時送出請求導致無效逾時）
+  const elapsedSec = Math.round((Date.now() - taskStartTime) / 1000);
+  if (elapsedSec > 220) {
+    throw new Error('任務前期耗時已達 ' + elapsedSec + ' 秒，為防撞上 360 秒限制，主動延後至下一輪排程執行。');
+  }
+
+  // ★ 方案 A：PDF 大圖智能精簡（針對每週第一頁約 8~9MB 的高解析教堂大圖）
+  // 僅針對送給 Gemini 的視覺內容做瘦身，原始 PDF 與備份完全不受影響
+  let targetPdfBase64 = pdfBase64;
+  if (pdfBytes.length > 2.5 * 1024 * 1024) {
+    try {
+      const slimResult = slimPdfBlobBytes(pdfBytes);
+      if (slimResult && slimResult.bytes && slimResult.bytes.length < pdfBytes.length * 0.75) {
+        Logger.log('       ⚡ 成功精簡 PDF：' + Math.round(pdfBytes.length / 1024) + ' KB ➔ ' + Math.round(slimResult.bytes.length / 1024) + ' KB（已排除 ' + slimResult.removedCount + ' 張高解析大圖，預估 25 秒內辨識完畢）');
+        targetPdfBase64 = Utilities.base64Encode(slimResult.bytes);
+      }
+    } catch (slimErr) {
+      Logger.log('       ⚠️ PDF 精簡過程略過：' + slimErr.message + '，平滑回退使用原始 PDF');
+      targetPdfBase64 = pdfBase64;
+    }
+  }
 
   let result;
   if (useGemini) {
     Logger.log('  [4/6] 呼叫 Gemini AI 辨識內文與排版...');
-    result = callGeminiWithPdf(pdfBase64, fallbackDateStr, geminiApiKey, extractedUrls);
+    result = callGeminiWithPdf(targetPdfBase64, fallbackDateStr, geminiApiKey, extractedUrls);
   } else {
     throw new Error('processOneBulletin 缺少 HTML：補修請改走 repairPublishedWithoutGemini()');
   }
@@ -941,6 +1125,11 @@ function processOneBulletin(file, geminiApiKey, githubToken, options) {
   Logger.log('       ✓ 辨識卷期：第 ' + volume + ' 卷第 ' + issue + ' 期');
   Logger.log('       ✓ 辨識主日：' + finalDate);
   Logger.log('       ✓ 週報摘要：' + (summary ? summary.slice(0, 50) + (summary.length > 50 ? '…' : '') : '（未擷取到摘要）'));
+
+  // ★ 方案 C：發布前防呆檢查（杜絕空白或腰斬殘缺頁面發布到 Gist）
+  if (!finalHtml || finalHtml.length < 3000 || (!/<body[\s\S]*<\/body>/i.test(finalHtml) && !/<details[\s\S]*<\/details>/i.test(finalHtml))) {
+    throw new Error('發布攔截：辨識出的 HTML 內文嚴重殘缺（長度僅 ' + (finalHtml ? finalHtml.length : 0) + ' 字），已阻止發布至 Gist 以保護線上頁面！');
+  }
 
   Logger.log('  [6/6] 上傳至 GitHub Gist（同一日期會覆蓋，不再開新 Gist）...');
   const gistFilename = 'tkch-bulletin-' + finalDate + '.html';
@@ -1380,7 +1569,7 @@ summary 欄位規範：
     }],
     generationConfig: {
       temperature: 0.1,
-      maxOutputTokens: 32768
+      maxOutputTokens: 12000  // ★ 配合實際週報 HTML 約 9000 tokens；32768 導致 Apps Script 6 分鐘逾時
     }
   };
 
@@ -1397,20 +1586,23 @@ summary 欄位規範：
   for (const model of GEMINI_MODELS) {
     const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(apiKey.trim());
     for (let attempt = 1; attempt <= 2; attempt++) {
+      Logger.log('       🤖 正在呼叫 ' + model + '（第 ' + attempt + ' 次嘗試）進行 OCR 與 HTML 排版，資料量較大約需 60～120 秒，請稍候...');
+      const startTime = new Date().getTime();
       const response = UrlFetchApp.fetch(url, fetchOptions);
+      const elapsedSec = Math.round((new Date().getTime() - startTime) / 1000);
       const status   = response.getResponseCode();
       if (status === 429) {
         rememberGemini429();
         throw new Error('Gemini HTTP 429 配額已用盡，本次整批停止。請隔數小時再跑，或先執行 repairPublishedWithoutGemini()。');
       }
       if (status === 503 && attempt === 1) {
-        Logger.log('       ⏳ ' + model + ' 暫時忙碌，等待 4 秒後重試...');
+        Logger.log('       ⏳ ' + model + ' 暫時忙碌（耗時 ' + elapsedSec + ' 秒），等待 4 秒後重試...');
         Utilities.sleep(4000);
         continue;
       }
       if (status !== 200) {
         const errSnippet = response.getContentText().slice(0, 150);
-        Logger.log('       ⚠️ ' + model + ' 回應 HTTP ' + status + '：' + errSnippet);
+        Logger.log('       ⚠️ ' + model + ' 回應 HTTP ' + status + '（耗時 ' + elapsedSec + ' 秒）：' + errSnippet);
         break;
       }
       const resJson = JSON.parse(response.getContentText());
@@ -1420,10 +1612,19 @@ summary 欄位規範：
         Logger.log('       ⚠️ ' + model + ' 回傳內容為空');
         break;
       }
+
+      // ★ 方案 C：輸出防截斷防護（嚴防只有十幾行或在 style 中途腰斬的情況）
+      const isHtmlTruncated = rawText.length < 2500 ||
+        (!/<body[\s\S]*<\/body>/i.test(rawText) && !/<\/details>/i.test(rawText));
+      if (isHtmlTruncated) {
+        Logger.log('       ⚠️ ' + model + ' 輸出內容過短或嚴重殘缺（僅 ' + rawText.length + ' 字，結束原因: ' + (candidate.finishReason || '未知') + '），自動切換下一模型重試...');
+        break;
+      }
+
       if (candidate.finishReason && candidate.finishReason !== 'STOP') {
         Logger.log('       ⚠️ 模型結束原因：' + candidate.finishReason + '（若為 MAX_TOKENS 將嘗試補上結尾標籤）');
       }
-      Logger.log('       ✓ 成功使用模型：' + model);
+      Logger.log('       ✓ 成功使用模型：' + model + '（耗時 ' + elapsedSec + ' 秒）');
       return parseGeminiResponse(rawText, fallbackDateStr);
     }
   }
@@ -1630,6 +1831,26 @@ function fetchGistHtml(gistId, githubToken) {
     if (/\.html$/i.test(names[i]) && files[names[i]].content) return files[names[i]].content;
   }
   return (files[names[0]] && files[names[0]].content) || '';
+}
+
+/** 取得 Gist 中的第一個 .html 檔名（真實檔名，用於 PATCH 與預覽 URL） */
+function fetchGistFilename(gistId, githubToken, fallbackDate) {
+  try {
+    const res = UrlFetchApp.fetch('https://api.github.com/gists/' + gistId, {
+      headers: githubHeaders(githubToken),
+      muteHttpExceptions: true
+    });
+    if (res.getResponseCode() !== 200) throw new Error('HTTP ' + res.getResponseCode());
+    const detail = JSON.parse(res.getContentText());
+    const files = detail.files || {};
+    const names = Object.keys(files);
+    for (let i = 0; i < names.length; i++) {
+      if (/\.html$/i.test(names[i])) return names[i];
+    }
+    return names[0] || ('tkch-bulletin-' + fallbackDate + '.html');
+  } catch (e) {
+    return 'tkch-bulletin-' + fallbackDate + '.html';
+  }
 }
 
 function findIndexGist(githubToken) {
@@ -1896,14 +2117,41 @@ function diagnoseLatestPdf() {
   }
   Logger.log('🎯 檔案：' + latestFile.getName());
   const urls = extractUrlsFromPdf(latestFile);
-  Logger.log('📎 抽出 ' + urls.length + ' 個網址：');
+  Logger.log('📎 annotation 層抽出 ' + urls.length + ' 個網址：');
   urls.forEach(function (u, i) { Logger.log('   ' + (i + 1) + '. ' + u); });
+
+  // ★ 新增：Gemini 視覺掃描 QR Code 診斷
+  var props = PropertiesService.getScriptProperties();
+  var apiKey = props.getProperty('GEMINI_API_KEY');
+  if (apiKey) {
+    Logger.log('\n🔲 Gemini 視覺掃描 QR Code...');
+    try {
+      var pdfBase64 = Utilities.base64Encode(latestFile.getBlob().getBytes());
+      var qrUrls = scanQrCodesWithGemini(pdfBase64, apiKey);
+      Logger.log('📱 QR 掃描出 ' + qrUrls.length + ' 個網址：');
+      qrUrls.forEach(function (u, i) { Logger.log('   ' + (i + 1) + '. ' + u); });
+      // 比對哪些是 annotation 層沒有的
+      var newFromQr = qrUrls.filter(function (u) { return urls.indexOf(u) === -1; });
+      if (newFromQr.length > 0) {
+        Logger.log('🆕 QR 掃描新發現（annotation 層沒有）：');
+        newFromQr.forEach(function (u, i) { Logger.log('   ✨ ' + (i + 1) + '. ' + u); });
+      } else {
+        Logger.log('   ✓ QR 掃描的網址都已在 annotation 層中（無新增）');
+      }
+    } catch (e) {
+      Logger.log('⚠️ QR 掃描失敗：' + e.message);
+    }
+  } else {
+    Logger.log('⚠ 跳過 QR 掃描（尚未設定 GEMINI_API_KEY）');
+  }
+
+  Logger.log('\n📋 完整網址解析結果：');
   const resolved = resolveUrlsMetadata(urls);
   resolved.forEach(function (item) {
     Logger.log('   → ' + item.label + (item.isOffering ? '（將排除）' : '') + ' | ' + item.url);
   });
   if (urls.length === 0) {
-    Logger.log('⚠ 若週報上的連結其實是 QR 圖片而不是可點的 PDF 註解，這是正常的。會改用關鍵字強制放入常設按鈕。');
+    Logger.log('⚠ 若週報上的連結其實是 QR 圖片而不是可點的 PDF 註解，這是正常的。QR 掃描功能會自動補救。');
   }
 }
 
@@ -1932,7 +2180,10 @@ function reprocessLatestBulletin() {
   }
   Logger.log('🎯 鎖定最新週報檔案：' + latestFile.getName());
   try {
-    processOneBulletin(latestFile, GEMINI_API_KEY, GITHUB_TOKEN, { useGemini: true });
+    processOneBulletin(latestFile, GEMINI_API_KEY, GITHUB_TOKEN, {
+      useGemini: true,
+      taskStartTime: Date.now()
+    });
     markAsProcessed(latestFile.getId());
     sortCurrentIndexGist();
     Logger.log('🎉 最新週報已重新處理完成，並已自動置頂！請重新整理網頁查看！');
@@ -1996,6 +2247,291 @@ function unique(arr) {
     }
   });
   return out;
+}
+
+// ============================================================
+// ⚡ 方案 A：PDF 智能瘦身（排除封面高解析度大圖）
+// ============================================================
+// 一個極小且合法的 1x1 像素白色 JPEG（Base64，約 134 bytes）
+const TINY_JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
+
+/**
+ * 針對送往 Gemini 的 PDF 進行智能瘦身：
+ * 尋找所有體積大於 250KB 的圖片 XObject（主要是第一頁每週固定、佔了 8~9MB 的教堂外觀照片），
+ * 將其替換為極小的 1x1 白色 JPEG，同時保留所有文字排版、字型、線條與頁面結構，
+ * 並重建標準 xref 表，使檔案從 ~10.4MB 驟降至 ~350KB。
+ * 原始 PDF 與備份完全不受影響。
+ */
+function slimPdfBlobBytes(pdfBytes) {
+  if (!pdfBytes || pdfBytes.length < 1000) return null;
+
+  let raw = '';
+  for (let i = 0; i < pdfBytes.length; i++) {
+    raw += String.fromCharCode(pdfBytes[i] & 0xFF);
+  }
+
+  const threshold = 80 * 1024;  // ★ 由 250KB 調降至 80KB：排除更多大圖，讓 PDF 夠小以在 Apps Script 6 分鐘內完成
+  const tinyJpegBinary = Utilities.base64Decode(TINY_JPEG_BASE64);
+  let tinyJpegStr = '';
+  for (let i = 0; i < tinyJpegBinary.length; i++) {
+    tinyJpegStr += String.fromCharCode(tinyJpegBinary[i] & 0xFF);
+  }
+
+  const objRe = /(\d+)\s+(\d+)\s+obj([\s\S]*?)endobj/g;
+  let replacedCount = 0;
+  let totalSaved = 0;
+
+  const newPdf = raw.replace(objRe, function(fullObj, id, gen, body) {
+    if (!/\/Subtype\s*\/Image/i.test(body)) return fullObj;
+
+    const streamStartMatch = body.match(/stream(\r\n|\n|\r)/);
+    if (!streamStartMatch) return fullObj;
+
+    const streamIndex = streamStartMatch.index + streamStartMatch[0].length;
+    const endstreamIndex = body.lastIndexOf('endstream');
+    if (endstreamIndex <= streamIndex) return fullObj;
+
+    const streamLen = endstreamIndex - streamIndex;
+    if (streamLen < threshold) return fullObj;
+
+    let dict = body.slice(0, streamStartMatch.index).trim();
+    dict = dict.replace(/\/Length\s+\d+/i, '/Length ' + tinyJpegBinary.length);
+    dict = dict.replace(/\/Width\s+\d+/i, '/Width 1');
+    dict = dict.replace(/\/Height\s+\d+/i, '/Height 1');
+
+    if (!/\/Filter\s*\/DCTDecode/i.test(dict)) {
+      if (/\/Filter\s*\/[A-Za-z0-9]+/i.test(dict)) {
+        dict = dict.replace(/\/Filter\s*\/[A-Za-z0-9]+/i, '/Filter /DCTDecode');
+      } else {
+        dict = dict.replace(/>>\s*$/, ' /Filter /DCTDecode >>');
+      }
+    }
+
+    const eol = streamStartMatch[1];
+    const newBody = dict + eol + 'stream' + eol + tinyJpegStr + eol + 'endstream';
+    replacedCount++;
+    totalSaved += (streamLen - tinyJpegBinary.length);
+    return id + ' ' + gen + ' obj\n' + newBody + '\nendobj';
+  });
+
+  if (replacedCount === 0) return null;
+
+  const rebuiltPdfStr = rebuildPdfXrefTable(newPdf);
+
+  const resultBytes = [];
+  for (let i = 0; i < rebuiltPdfStr.length; i++) {
+    let b = rebuiltPdfStr.charCodeAt(i) & 0xFF;
+    if (b > 127) b -= 256;
+    resultBytes.push(b);
+  }
+
+  return {
+    bytes: resultBytes,
+    removedCount: replacedCount,
+    savedBytes: totalSaved
+  };
+}
+
+function rebuildPdfXrefTable(pdfStr) {
+  const xrefIdx = pdfStr.lastIndexOf('xref');
+  let cleanPdf = pdfStr;
+  let trailerDict = '<< /Size 1 >>';
+
+  const trailerMatch = pdfStr.match(/trailer\s*([\s\S]*?)(?:startxref|%%EOF|$)/);
+  if (trailerMatch) {
+    trailerDict = trailerMatch[1].trim();
+  }
+
+  if (xrefIdx !== -1) {
+    cleanPdf = pdfStr.slice(0, xrefIdx).trim();
+  }
+
+  const objRe = /(\d+)\s+(\d+)\s+obj/g;
+  const offsets = {};
+  let m;
+  let maxId = 0;
+  while ((m = objRe.exec(cleanPdf)) !== null) {
+    const id = parseInt(m[1], 10);
+    offsets[id] = m.index;
+    if (id > maxId) maxId = id;
+  }
+
+  const newXrefOffset = cleanPdf.length + 1;
+  let xrefTable = '\nxref\n0 ' + (maxId + 1) + '\n';
+  xrefTable += '0000000000 65535 f \n';
+  for (let i = 1; i <= maxId; i++) {
+    if (offsets[i] !== undefined) {
+      xrefTable += String(offsets[i]).padStart(10, '0') + ' 00000 n \n';
+    } else {
+      xrefTable += '0000000000 65535 f \n';
+    }
+  }
+
+  trailerDict = trailerDict.replace(/\/Size\s+\d+/i, '/Size ' + (maxId + 1));
+  if (!/\/Size/i.test(trailerDict)) {
+    trailerDict = trailerDict.replace(/>>\s*$/, ' /Size ' + (maxId + 1) + ' >>');
+  }
+
+  return cleanPdf + '\n' + xrefTable + 'trailer\n' + trailerDict + '\nstartxref\n' + newXrefOffset + '\n%%EOF';
+}
+
+// ============================================================
+// 🔲 Gemini 視覺掃描 QR Code（自動辨識 PDF 中的 QR Code 圖片網址）
+// ============================================================
+
+/**
+ * ★ 用 Gemini Flash 視覺模型掃描 PDF 中所有 QR Code，回傳 URL 陣列。
+ * 這是 extractUrlsFromPdf 的互補：extractUrlsFromPdf 只抽 PDF annotation 層，
+ * 本函式則用 AI 視覺直接「看」QR Code 圖片並解碼其中的網址。
+ * 幹事有時會忘記在 QR Code 上加超連結，本機制可自動補救。
+ *
+ * @param {string} pdfBase64 - 原始 PDF 的 Base64 編碼（非精簡版）
+ * @param {string} apiKey    - Gemini API Key
+ * @return {string[]} 從 QR Code 掃出的 URL 陣列（已去重、過濾）
+ */
+function scanQrCodesWithGemini(pdfBase64, apiKey) {
+  var prompt =
+    '請仔細掃描這份 PDF 的每一頁，找出所有 QR Code 圖片，並解碼每個 QR Code 裡編碼的網址。\n' +
+    '只回傳網址清單，每行一個網址，不要加編號、說明或其他文字。\n' +
+    '如果某個 QR Code 無法辨識或不是網址，請跳過。\n' +
+    '如果整份 PDF 沒有任何 QR Code，就回傳空白。';
+
+  var requestBody = {
+    contents: [{
+      parts: [
+        { inline_data: { mime_type: 'application/pdf', data: pdfBase64 } },
+        { text: prompt }
+      ]
+    }],
+    generationConfig: {
+      temperature: 0.0,
+      maxOutputTokens: 2048
+    }
+  };
+
+  var fetchOptions = {
+    method: 'POST',
+    contentType: 'application/json',
+    headers: { 'x-goog-api-key': apiKey.trim() },
+    payload: JSON.stringify(requestBody),
+    muteHttpExceptions: true
+  };
+
+  // ★ 用推理能力較強的模型掃描 QR Code（優先使用最新 Pro 與 Flash 模型）
+  var qrModels = ['gemini-pro-latest', 'gemini-flash-latest', 'gemini-flash-lite-latest'];
+
+  for (var mi = 0; mi < qrModels.length; mi++) {
+    var model = qrModels[mi];
+    try {
+      var endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(apiKey.trim());
+      var response = UrlFetchApp.fetch(endpoint, fetchOptions);
+      var status = response.getResponseCode();
+
+      if (status === 429) {
+        Logger.log('       ⚠️ QR 掃描遇 429 配額限制，跳過 QR 掃描');
+        return [];
+      }
+      if (status !== 200) {
+        Logger.log('       ⚠️ QR 掃描 ' + model + ' HTTP ' + status + '，嘗試下一模型');
+        continue;
+      }
+
+      var resJson = JSON.parse(response.getContentText());
+      var candidate = (resJson.candidates || [])[0] || {};
+      var rawText = (candidate.content && candidate.content.parts && candidate.content.parts[0] && candidate.content.parts[0].text) || '';
+
+      if (!rawText || rawText.trim().length === 0) {
+        Logger.log('       ℹ️ QR 掃描回傳空白（本期可能沒有 QR Code 圖片）');
+        return [];
+      }
+
+      // 從回應中擷取所有 URL
+      var qrUrls = [];
+      var qrSeen = {};
+      var lines = rawText.split(/[\r\n]+/);
+      for (var li = 0; li < lines.length; li++) {
+        var trimmed = lines[li].trim()
+          .replace(/^[\d]+[.)、]\s*/, '')  // 去除可能的編號
+          .replace(/^[-*]\s*/, '')          // 去除列表符號
+          .trim();
+        // 擷取 URL
+        var urlMatch = trimmed.match(/https?:\/\/[^\s<>"'`]+/i);
+        if (urlMatch) {
+          var u = urlMatch[0].replace(/[.,;:!?）)\]>]+$/, '');
+          if (u.length < 12 || u.length > 500) continue;
+          if (qrSeen[u]) continue;
+          if (!isUsefulBulletinUrl(u)) continue;
+          // 過濾 LINE 加好友連結（不是活動報名，不該變按鈕）
+          if (/liff\.line\.me|lin\.ee|line\.me\/R\//i.test(u)) continue;
+          qrSeen[u] = true;
+          qrUrls.push(u);
+        }
+      }
+
+      Logger.log('       ✓ QR 掃描成功（' + model + '），掃出 ' + qrUrls.length + ' 個候選網址，開始驗證...');
+
+      // ★ 驗證每個 QR 掃描到的 URL 是否真實存在
+      //   Gemini 有時會「猜」QR Code 內容而非真正解碼，導致虛構網址。
+      //   對短網址服務（reurl.cc、go.tkch.org.tw 等）使用 followRedirects:false
+      //   檢查是否回傳 301/302 轉址，虛構短網址只會回 200（首頁）。
+      var verifiedUrls = [];
+      for (var vi = 0; vi < qrUrls.length; vi++) {
+        try {
+          var testUrl = qrUrls[vi];
+          var isShortUrl = /reurl\.cc|go\.tkch\.org|bit\.ly|goo\.gl|tinyurl|pse\.is/i.test(testUrl);
+
+          if (isShortUrl) {
+            // 短網址驗證：真實短網址會 301/302 轉址，虛構的回 200（首頁）
+            var shortRes = UrlFetchApp.fetch(testUrl, {
+              method: 'GET',
+              muteHttpExceptions: true,
+              followRedirects: false,
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              validateHttpsCertificates: false
+            });
+            var shortCode = shortRes.getResponseCode();
+            if (shortCode >= 300 && shortCode < 400) {
+              var location = shortRes.getHeaders()['Location'] || shortRes.getHeaders()['location'] || '';
+              if (location && location.length > 10) {
+                verifiedUrls.push(testUrl);
+                Logger.log('       ✓ QR 短網址驗證通過（' + shortCode + ' → ' + location.slice(0, 60) + '）：' + testUrl);
+              } else {
+                Logger.log('       ✗ QR 短網址轉址目標無效：' + testUrl);
+              }
+            } else {
+              Logger.log('       ✗ QR 短網址驗證失敗（HTTP ' + shortCode + '，非轉址）：' + testUrl);
+            }
+          } else {
+            // 一般網址驗證：直接 GET 確認 HTTP 200
+            var normalRes = UrlFetchApp.fetch(testUrl, {
+              method: 'GET',
+              muteHttpExceptions: true,
+              followRedirects: true,
+              headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+              validateHttpsCertificates: false
+            });
+            var normalCode = normalRes.getResponseCode();
+            if (normalCode >= 200 && normalCode < 400) {
+              verifiedUrls.push(testUrl);
+            } else {
+              Logger.log('       ✗ QR 網址驗證失敗（HTTP ' + normalCode + '）：' + testUrl);
+            }
+          }
+        } catch (verifyErr) {
+          Logger.log('       ✗ QR 網址無法連線：' + qrUrls[vi] + '（' + verifyErr.message + '）');
+        }
+      }
+
+      Logger.log('       ✓ QR 掃描最終通過驗證：' + verifiedUrls.length + '/' + qrUrls.length + ' 個');
+      return verifiedUrls;
+
+    } catch (e) {
+      Logger.log('       ⚠️ QR 掃描 ' + model + ' 例外：' + e.message);
+    }
+  }
+
+  Logger.log('       ⚠️ QR 掃描所有模型均失敗，跳過 QR 掃描');
+  return [];
 }
 
 // ============================================================
@@ -2459,7 +2995,13 @@ function injectKeywordButtons(html) {
       const rest = out.slice(idx);
       const close = rest.match(/<\/(p|li|h[1-6]|div|td|blockquote|summary)>/i);
       if (close) {
-        const at = idx + close.index + close[0].length;
+        var at = idx + close.index + close[0].length;
+        // ★ 排版修正：若插入點在 <ol>/<ul> 內部，跳到 </ol>/<ul> 之後
+        var afterBtn = out.slice(at, at + 500);
+        var listClose = afterBtn.match(/^[\s\S]*?<\/(ol|ul)>/i);
+        if (listClose && !/<(ol|ul)[\s>]/i.test(afterBtn.slice(0, listClose.index + listClose[0].length))) {
+          at = at + listClose.index + listClose[0].length;
+        }
         out = out.slice(0, at) + '\n' + button + out.slice(at);
         inserted = true;
         break;
@@ -2492,7 +3034,13 @@ function injectKnownMetaButtons(html) {
       const rest = out.slice(idx);
       const close = rest.match(/<\/(p|li|h[1-6]|div|td|blockquote|summary)>/i);
       if (close) {
-        const at = idx + close.index + close[0].length;
+        var at = idx + close.index + close[0].length;
+        // ★ 排版修正：若插入點在 <ol>/<ul> 內部，跳到 </ol>/<ul> 之後
+        var afterBtn = out.slice(at, at + 500);
+        var listClose = afterBtn.match(/^[\s\S]*?<\/(ol|ul)>/i);
+        if (listClose && !/<(ol|ul)[\s>]/i.test(afterBtn.slice(0, listClose.index + listClose[0].length))) {
+          at = at + listClose.index + listClose[0].length;
+        }
         out = out.slice(0, at) + '\n' + button + out.slice(at);
         inserted = true;
         break;
@@ -2560,7 +3108,18 @@ function injectMissingResolvedUrls(html, resolvedUrls) {
       const rest = out.slice(matchIdx);
       const close = rest.match(/<\/(p|li|h[1-6]|div|td|blockquote|summary)>/i);
       if (close) {
-        const at = matchIdx + close.index + close[0].length;
+        var at = matchIdx + close.index + close[0].length;
+        // ★ 排版修正：若插入點仍在 <ol>/<ul> 內部，往後跳到 </ol> 或 </ul> 之後，
+        //   避免 <p> 出現在 list 裡面（無效 HTML，會導致按鈕跑版）
+        var afterInsert = out.slice(at, at + 500);
+        var nextListClose = afterInsert.match(/^[\s\S]*?<\/(ol|ul)>/i);
+        if (nextListClose) {
+          // 確認這段之間沒有新的 <ol>/<ul> 開頭（避免跳出錯誤的層級）
+          var gapText = afterInsert.slice(0, nextListClose.index + nextListClose[0].length);
+          if (!/<(ol|ul)[\s>]/i.test(gapText)) {
+            at = at + nextListClose.index + nextListClose[0].length;
+          }
+        }
         out = out.slice(0, at) + '\n' + buttonHtml + out.slice(at);
         Logger.log('       ✓ [防漏機制] 已自動為 PDF 抽出網址補上按鈕：' + label + ' (' + item.url + ')');
         return;
@@ -3048,6 +3607,480 @@ function injectAccessibilityAndTTS(html) {
 }
 
 
+
+// ============================================================
+// 🌐 後台管理 Web App — 補按鈕神器
+// 部署方式：Apps Script → 部署 → 管理部署 → 新增部署
+//           類型選「網路應用程式」，存取權選「所有人」或「僅限自己」
+// ============================================================
+
+/**
+ * Web App 入口：回傳後台管理 HTML 頁面
+ */
+function doGet(e) {
+  return HtmlService.createHtmlOutput(buildAdminPageHtml())
+    .setTitle('德光週報後台 | 補按鈕管理')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * 【前端呼叫】取得已上架週報列表（最近 30 期）
+ * @return {Array<{date:string, title:string, url:string}>}
+ */
+function getPublishedBulletins() {
+  try {
+    var githubToken = PropertiesService.getScriptProperties().getProperty('GITHUB_TOKEN');
+    var indexState = loadIndexGist(githubToken);
+    // loadIndexGist 回傳 { id, list } 物件，取 .list
+    var indexData = (indexState && indexState.list) ? indexState.list : [];
+    if (!Array.isArray(indexData) || indexData.length === 0) return [];
+    return indexData
+      .filter(function(item) { return item && item.date; })
+      .sort(function(a, b) { return b.date.localeCompare(a.date); })
+      .slice(0, 30)
+      .map(function(item) {
+        return { date: item.date, title: item.title || item.date, url: item.url || '' };
+      });
+  } catch (e) {
+    Logger.log('getPublishedBulletins error: ' + e.message);
+    return [];
+  }
+}
+
+/**
+ * 【一次性修正】移動錯位按鈕到正確位置
+ * 用途：修正 2026-11-22 免費索票按鈕跑到 </details> 外面的問題
+ * 在 Apps Script 編輯器直接執行此函數即可
+ */
+function fixMisplacedButton_20261122() {
+  var props       = PropertiesService.getScriptProperties();
+  var githubToken = props.getProperty('GITHUB_TOKEN');
+  var date        = '2026-11-22';
+  var gistId      = getGistIdByDate(date);
+  if (!gistId) { Logger.log('找不到 Gist'); return; }
+
+  var filename = fetchGistFilename(gistId, githubToken, date);
+  var html     = fetchGistHtml(gistId, githubToken);
+
+  var badBtn   = '\n<p><a href="https://christmas.studioclassroom.com/" class="qr-link" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:8px 20px;background:#C9A84C;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;margin:4px 0;">免費索票</a></p>';
+  var goodBtn  = '\n<p><a href="https://christmas.studioclassroom.com/" class="qr-link" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:8px 20px;background:#C9A84C;color:#fff;border-radius:6px;text-decoration:none;font-weight:bold;margin:4px 0;">免費索票</a></p>';
+
+  // 移除現在在 </details> 後面的錯位按鈕
+  var wrongPattern = badBtn + '\n<!-- 代禱事項';
+  var rightPattern = goodBtn + '\n</div>\n</details>\n<!-- 代禱事項';
+  if (html.indexOf(wrongPattern) !== -1) {
+    html = html.replace(wrongPattern, rightPattern);
+    patchGistHtml(gistId, filename, html, githubToken);
+    Logger.log('✅ 修正完成！按鈕已移回 </details> 內部。預覽：' + toStablePreviewUrl(gistId, filename));
+  } else {
+    // 嘗試另一種匹配方式
+    var marker = '</details>\n<p><a href="https://christmas.studioclassroom.com/"';
+    var idx = html.indexOf(marker);
+    if (idx === -1) {
+      Logger.log('❌ 找不到錯位的按鈕，請手動確認 Gist 內容');
+      return;
+    }
+    // 找到按鈕的結束位置
+    var btnEnd = html.indexOf('</p>', idx + marker.length) + '</p>'.length;
+    var btnFull = html.slice(idx + '</details>'.length, btnEnd);
+    // 把按鈕從錯誤位置移除
+    html = html.slice(0, idx + '</details>'.length) + html.slice(btnEnd);
+    // 找到正確位置：空中英語教室 段落的 </div>\n</details>
+    var anchor = '空中英語教室';
+    var aIdx   = html.indexOf(anchor);
+    var detIdx = html.indexOf('</details>', aIdx);
+    var divIdx = html.lastIndexOf('</div>', detIdx);
+    if (divIdx === -1 || divIdx < aIdx) {
+      Logger.log('⚠️ 找不到正確插入點，按鈕已移除但未重新插入，請手動補上');
+    } else {
+      html = html.slice(0, divIdx) + '\n' + btnFull + '\n' + html.slice(divIdx);
+      Logger.log('✅ 修正完成！按鈕已移回正確位置');
+    }
+    patchGistHtml(gistId, filename, html, githubToken);
+    Logger.log('預覽：' + toStablePreviewUrl(gistId, filename));
+  }
+}
+
+/**
+ * 【前端呼叫】用 Gemini Flash 智慧找位置、插入遺漏按鈕
+ * @param {Object} params  { date, activityName, url, label }
+ * @return {Object}  { ok:boolean, msg:string, previewUrl:string }
+ */
+function addMissingButtonWithGemini(params) {
+  try {
+    var props      = PropertiesService.getScriptProperties();
+    var githubToken  = props.getProperty('GITHUB_TOKEN');
+    var geminiApiKey = props.getProperty('GEMINI_API_KEY');
+
+    if (!geminiApiKey) return { ok: false, msg: '找不到 GEMINI_API_KEY，請先執行 setupApiKeys()' };
+    if (!githubToken)  return { ok: false, msg: '找不到 GITHUB_TOKEN，請先執行 setupApiKeys()' };
+
+    var date         = (params.date         || '').trim();
+    var activityName = (params.activityName || '').trim();
+    var href         = (params.url          || '').trim();
+    var label        = (params.label        || activityName + '連結').trim();
+
+    if (!date || !activityName || !href) {
+      return { ok: false, msg: '日期、活動名稱、連結網址均為必填' };
+    }
+
+    // 1. 取得該期 Gist ID
+    var gistId = getGistIdByDate(date);
+    if (!gistId) return { ok: false, msg: '找不到 ' + date + ' 這期的 Gist，請確認日期正確' };
+
+    // 2. 抓出目前 HTML
+    var currentHtml = fetchGistHtml(gistId, githubToken);
+    if (!currentHtml || currentHtml.length < 1000) {
+      return { ok: false, msg: '無法讀取 Gist HTML，請確認 GitHub Token 有效' };
+    }
+
+    // 3. 確認該活動關鍵字存在於 HTML
+    if (currentHtml.indexOf(activityName) === -1) {
+      return { ok: false, msg: '在週報 HTML 中找不到「' + activityName + '」，請確認活動名稱拼寫正確' };
+    }
+
+    // 4. 檢查是否已有該連結（避免重複補）
+    if (currentHtml.indexOf(href) !== -1) {
+      return { ok: false, msg: '該連結已存在於週報中，不需要重複補上' };
+    }
+
+    // 5. 用 Gemini Flash 找到正確位置插入按鈕
+    var buttonHtml =
+      '<p><a href="' + href + '" class="qr-link" target="_blank" rel="noopener noreferrer" ' +
+      'style="display:inline-block;padding:8px 20px;background:#C9A84C;color:#fff;' +
+      'border-radius:6px;text-decoration:none;font-weight:bold;margin:4px 0;">' +
+      label + '</a></p>';
+
+    var prompt =
+      '你是 HTML 編輯助理。以下是一份教會週報的完整 HTML。\n' +
+      '請找到提到「' + activityName + '」的段落，在該段落最後一行說明文字的 </p> 或 </li> 標籤之後，立刻插入下列 HTML 按鈕：\n\n' +
+      buttonHtml + '\n\n' +
+      '規則：\n' +
+      '1. 只插入一個按鈕，不要重複\n' +
+      '2. 插入位置：緊接在包含「' + activityName + '」說明的最後一個 </p> 標籤之後\n' +
+      '3. 若該活動說明在 <details> 區塊內，按鈕必須放在 </div></details> 之前（即在 <details> 區塊內部的末尾），絕對不可放在 </details> 外面\n' +
+      '4. 其他所有 HTML 完全不要修改，保留原有所有換行與縮排\n' +
+      '5. 直接回傳完整修改後的 HTML，不要加任何說明文字、不要加 markdown 標記\n\n' +
+      '原始 HTML：\n' + currentHtml;
+
+    var requestBody = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.0, maxOutputTokens: 12000 }
+    };
+
+    var models = ['gemini-flash-latest', 'gemini-flash-lite-latest'];
+    var newHtml = '';
+
+    for (var mi = 0; mi < models.length; mi++) {
+      var apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+        models[mi] + ':generateContent?key=' + encodeURIComponent(geminiApiKey.trim());
+      var resp = UrlFetchApp.fetch(apiUrl, {
+        method: 'POST',
+        contentType: 'application/json',
+        payload: JSON.stringify(requestBody),
+        muteHttpExceptions: true
+      });
+      if (resp.getResponseCode() !== 200) {
+        Logger.log('addMissingButton: ' + models[mi] + ' HTTP ' + resp.getResponseCode());
+        continue;
+      }
+      var resJson = JSON.parse(resp.getContentText());
+      var candidate = (resJson.candidates || [])[0] || {};
+      var rawText = (candidate.content && candidate.content.parts && candidate.content.parts[0] && candidate.content.parts[0].text) || '';
+      rawText = rawText.trim();
+      if (rawText.length > 1000 && rawText.indexOf(activityName) !== -1) {
+        newHtml = rawText;
+        break;
+      }
+    }
+
+    if (!newHtml) {
+      // Gemini 失敗時，降級用純文字搜尋插入
+      Logger.log('addMissingButton: Gemini 失敗，改用降級純文字插入');
+      var kIdx = currentHtml.indexOf(activityName);
+      if (kIdx === -1) return { ok: false, msg: '找不到「' + activityName + '」，降級插入也失敗' };
+      // 找到活動名稱後面最近的 </details> 或 </p>
+      var afterIdx = currentHtml.indexOf('</details>', kIdx);
+      if (afterIdx === -1) afterIdx = currentHtml.indexOf('</p>', kIdx);
+      if (afterIdx === -1) return { ok: false, msg: 'Gemini 無法使用，且找不到適合插入點，請改日再試' };
+      var closeTag = currentHtml.indexOf('</details>', kIdx) !== -1 ? '</details>' : '</p>';
+      afterIdx = currentHtml.indexOf(closeTag, kIdx) + closeTag.length;
+      newHtml = currentHtml.slice(0, afterIdx) + '\n' + buttonHtml + '\n' + currentHtml.slice(afterIdx);
+    }
+
+    // 確認按鈕確實插入了
+    if (newHtml.indexOf(href) === -1) {
+      return { ok: false, msg: 'Gemini 修改後的 HTML 中找不到按鈕，可能被遺漏，請重試' };
+    }
+
+    // 6. 更新 Gist（先取真實檔名，避免 patchGistHtml 新增了錯誤的檔名）
+    var filename = fetchGistFilename(gistId, githubToken, date);
+    patchGistHtml(gistId, filename, newHtml, githubToken);
+
+    var previewUrl = toStablePreviewUrl(gistId, filename);
+    Logger.log('addMissingButton: 成功為 ' + date + ' 補上「' + label + '」按鈕，檔名=' + filename);
+    return { ok: true, msg: '✅ 成功！「' + label + '」按鈕已補上', previewUrl: previewUrl };
+
+  } catch (err) {
+    Logger.log('addMissingButton error: ' + err.message);
+    return { ok: false, msg: '發生錯誤：' + err.message };
+  }
+}
+
+/**
+ * 【前端呼叫】直接用純文字搜尋插入（不用 Gemini，速度快）
+ * @param {Object} params  { date, activityName, url, label }
+ */
+function addMissingButtonSimple(params) {
+  try {
+    var props      = PropertiesService.getScriptProperties();
+    var githubToken  = props.getProperty('GITHUB_TOKEN');
+
+    var date         = (params.date         || '').trim();
+    var activityName = (params.activityName || '').trim();
+    var href         = (params.url          || '').trim();
+    var label        = (params.label        || activityName + '連結').trim();
+
+    if (!date || !activityName || !href) {
+      return { ok: false, msg: '日期、活動名稱、連結均為必填' };
+    }
+
+    var gistId = getGistIdByDate(date);
+    if (!gistId) return { ok: false, msg: '找不到 ' + date + ' 這期的 Gist' };
+
+    var html = fetchGistHtml(gistId, githubToken);
+    if (!html) return { ok: false, msg: '無法讀取 Gist HTML' };
+
+    if (html.indexOf(activityName) === -1) {
+      return { ok: false, msg: '找不到「' + activityName + '」，請確認名稱正確' };
+    }
+    if (html.indexOf(href) !== -1) {
+      return { ok: false, msg: '該連結已存在，不需重複補上' };
+    }
+
+    var buttonHtml =
+      '<p><a href="' + href + '" class="qr-link" target="_blank" rel="noopener noreferrer" ' +
+      'style="display:inline-block;padding:8px 20px;background:#C9A84C;color:#fff;' +
+      'border-radius:6px;text-decoration:none;font-weight:bold;margin:4px 0;">' +
+      label + '</a></p>';
+
+    // 找關鍵字後面最近的 </details> 或 </p>，插入在標籤【之前】讓按鈕在區塊內
+    var kIdx = html.indexOf(activityName);
+    var detailsIdx = html.indexOf('</details>', kIdx);
+    var pIdx       = html.indexOf('</p>', kIdx);
+    var insertAfter;
+    if (detailsIdx !== -1 && (pIdx === -1 || detailsIdx < pIdx + 500)) {
+      // 插在 </div>\n</details> 之前：找 </details> 之前最近的 </div>
+      var divCloseIdx = html.lastIndexOf('</div>', detailsIdx);
+      insertAfter = (divCloseIdx !== -1 && divCloseIdx > kIdx) ? divCloseIdx : detailsIdx;
+    } else if (pIdx !== -1) {
+      insertAfter = pIdx + '</p>'.length;
+    } else {
+      return { ok: false, msg: '找不到適合的插入點（</details> 或 </p>）' };
+    }
+
+    var newHtml = html.slice(0, insertAfter) + '\n' + buttonHtml + '\n' + html.slice(insertAfter);
+    // 取真實檔名，避免 patchGistHtml 新增錯誤的檔名
+    var filename = fetchGistFilename(gistId, githubToken, date);
+    patchGistHtml(gistId, filename, newHtml, githubToken);
+
+    return { ok: true, msg: '✅ 成功！「' + label + '」按鈕已補上（快速模式）', previewUrl: toStablePreviewUrl(gistId, filename) };
+
+  } catch (err) {
+    return { ok: false, msg: '錯誤：' + err.message };
+  }
+}
+
+/**
+ * 後台 HTML 頁面（全部內嵌）
+ */
+function buildAdminPageHtml() {
+  return '<!DOCTYPE html>\n' +
+'<html lang="zh-TW">\n' +
+'<head>\n' +
+'<meta charset="UTF-8">\n' +
+'<meta name="viewport" content="width=device-width,initial-scale=1">\n' +
+'<title>德光週報後台 | 補按鈕管理</title>\n' +
+'<style>\n' +
+':root{--gold:#C9A84C;--dark:#334155;--blue:#5850EC;--bg:#f8f7f4;--card:#fff;--red:#ef4444;--green:#22c55e}\n' +
+'*{box-sizing:border-box;margin:0;padding:0}\n' +
+'body{font-family:"Noto Sans TC",system-ui,sans-serif;background:var(--bg);color:var(--dark);min-height:100vh}\n' +
+'.header{background:linear-gradient(135deg,var(--dark) 0%,#1e293b 100%);color:#fff;padding:20px 24px;display:flex;align-items:center;gap:14px}\n' +
+'.header .logo{font-size:28px}\n' +
+'.header h1{font-size:18px;font-weight:700;line-height:1.3}\n' +
+'.header h1 small{display:block;font-size:12px;opacity:.7;font-weight:400;margin-top:2px}\n' +
+'.main{max-width:680px;margin:0 auto;padding:24px 16px 60px}\n' +
+'.card{background:var(--card);border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08);padding:24px;margin-bottom:20px}\n' +
+'.card h2{font-size:15px;font-weight:700;color:var(--dark);margin-bottom:16px;padding-bottom:10px;border-bottom:2px solid var(--gold);display:flex;align-items:center;gap:8px}\n' +
+'label{display:block;font-size:13px;font-weight:600;color:#64748b;margin-bottom:5px;margin-top:14px}\n' +
+'label:first-of-type{margin-top:0}\n' +
+'select,input[type=text],input[type=url]{width:100%;padding:10px 12px;border:1.5px solid #e2e8f0;border-radius:8px;font-size:14px;color:var(--dark);background:#fafafa;transition:border .2s}\n' +
+'select:focus,input:focus{outline:none;border-color:var(--gold);background:#fff}\n' +
+'.btn{display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;transition:.2s}\n' +
+'.btn-gold{background:var(--gold);color:#fff}\n' +
+'.btn-gold:hover{background:#b8902a}\n' +
+'.btn-blue{background:var(--blue);color:#fff}\n' +
+'.btn-blue:hover{background:#4338ca}\n' +
+'.btn-sm{padding:7px 14px;font-size:13px}\n' +
+'.btn:disabled{opacity:.5;cursor:not-allowed}\n' +
+'.actions{display:flex;gap:10px;margin-top:18px;flex-wrap:wrap}\n' +
+'.alert{padding:14px 16px;border-radius:8px;font-size:14px;margin-top:16px;display:none;line-height:1.5}\n' +
+'.alert.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;display:block}\n' +
+'.alert.err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;display:block}\n' +
+'.alert.info{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;display:block}\n' +
+'.spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite}\n' +
+'@keyframes spin{to{transform:rotate(360deg)}}\n' +
+'.preview-link{display:inline-flex;align-items:center;gap:6px;color:var(--blue);text-decoration:none;font-size:13px;font-weight:600;margin-top:10px}\n' +
+'.preview-link:hover{text-decoration:underline}\n' +
+'.hint{font-size:12px;color:#94a3b8;margin-top:4px}\n' +
+'.badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;background:#f1f5f9;color:#64748b;margin-left:6px}\n' +
+'.mode-tabs{display:flex;gap:8px;margin-bottom:16px}\n' +
+'.tab{padding:7px 16px;border-radius:20px;font-size:13px;font-weight:600;cursor:pointer;border:1.5px solid #e2e8f0;background:#fff;color:#64748b;transition:.2s}\n' +
+'.tab.active{background:var(--gold);border-color:var(--gold);color:#fff}\n' +
+'</style>\n' +
+'</head>\n' +
+'<body>\n' +
+'<div class="header">\n' +
+'  <div class="logo">⛪</div>\n' +
+'  <div class="header-text">\n' +
+'    <h1>德光長老教會 週報後台<small>補按鈕管理工具 · 由 Gemini Flash 驅動</small></h1>\n' +
+'  </div>\n' +
+'</div>\n' +
+'<div class="main">\n' +
+'\n' +
+'  <div class="card">\n' +
+'    <h2>🔗 為週報補上遺漏的活動按鈕</h2>\n' +
+'\n' +
+'    <div class="mode-tabs">\n' +
+'      <div class="tab active" id="tabGemini" onclick="switchMode(\'gemini\')">🤖 Gemini 智慧模式</div>\n' +
+'      <div class="tab" id="tabSimple" onclick="switchMode(\'simple\')">⚡ 快速模式</div>\n' +
+'    </div>\n' +
+'\n' +
+'    <label>選擇週報期數</label>\n' +
+'    <select id="selDate">\n' +
+'      <option value="">— 載入中，請稍候 —</option>\n' +
+'    </select>\n' +
+'\n' +
+'    <label>活動名稱<span class="badge">週報內出現的文字</span></label>\n' +
+'    <input type="text" id="inActivity" placeholder="例：空中英語教室、慕道班、2026 青少年跨年" />\n' +
+'    <div class="hint">必須與週報 HTML 中出現的文字完全一致</div>\n' +
+'\n' +
+'    <label>連結網址</label>\n' +
+'    <input type="url" id="inUrl" placeholder="https://reurl.cc/xxxxxx 或完整網址" />\n' +
+'\n' +
+'    <label>按鈕文字</label>\n' +
+'    <input type="text" id="inLabel" placeholder="例：空中英語教室報名、點此了解詳情" />\n' +
+'\n' +
+'    <div class="actions">\n' +
+'      <button class="btn btn-gold" id="btnSubmit" onclick="submit()">\n' +
+'        <span id="btnIcon">🤖</span> <span id="btnText">Gemini 智慧補按鈕</span>\n' +
+'      </button>\n' +
+'    </div>\n' +
+'\n' +
+'    <div class="alert" id="alertBox"></div>\n' +
+'    <a class="preview-link" id="previewLink" href="#" target="_blank" style="display:none">🔗 開啟週報確認按鈕</a>\n' +
+'  </div>\n' +
+'\n' +
+'  <div class="card">\n' +
+'    <h2>📋 操作說明</h2>\n' +
+'    <ol style="padding-left:18px;font-size:14px;line-height:2">\n' +
+'      <li>選擇要補按鈕的週報期數（最近 30 期）</li>\n' +
+'      <li>填入幹事忘記加連結的活動名稱（與週報文字一致）</li>\n' +
+'      <li>填入正確的連結網址與按鈕文字</li>\n' +
+'      <li>點「補按鈕」→ Gemini 自動找到正確位置插入 → Gist 立即更新</li>\n' +
+'      <li>點「開啟週報確認按鈕」查看結果</li>\n' +
+'    </ol>\n' +
+'    <p style="font-size:13px;color:#94a3b8;margin-top:12px">🤖 Gemini 智慧模式：由 AI 判斷最佳插入位置，較準確<br>⚡ 快速模式：純文字搜尋插入，速度快但位置可能稍不精確</p>\n' +
+'  </div>\n' +
+'\n' +
+'</div>\n' +
+'\n' +
+'<script>\n' +
+'var currentMode = "gemini";\n' +
+'\n' +
+'function switchMode(m) {\n' +
+'  currentMode = m;\n' +
+'  document.getElementById("tabGemini").className = "tab" + (m === "gemini" ? " active" : "");\n' +
+'  document.getElementById("tabSimple").className = "tab" + (m === "simple" ? " active" : "");\n' +
+'  var isGemini = m === "gemini";\n' +
+'  document.getElementById("btnIcon").textContent = isGemini ? "🤖" : "⚡";\n' +
+'  document.getElementById("btnText").textContent = isGemini ? "Gemini 智慧補按鈕" : "快速補按鈕";\n' +
+'}\n' +
+'\n' +
+'function setAlert(type, msg) {\n' +
+'  var el = document.getElementById("alertBox");\n' +
+'  el.className = "alert " + type;\n' +
+'  el.textContent = msg;\n' +
+'}\n' +
+'\n' +
+'function submit() {\n' +
+'  var date = document.getElementById("selDate").value;\n' +
+'  var act  = document.getElementById("inActivity").value.trim();\n' +
+'  var url  = document.getElementById("inUrl").value.trim();\n' +
+'  var lbl  = document.getElementById("inLabel").value.trim();\n' +
+'\n' +
+'  if (!date || !act || !url) {\n' +
+'    setAlert("err", "⚠️ 請填寫：週報期數、活動名稱、連結網址（三項必填）");\n' +
+'    return;\n' +
+'  }\n' +
+'  if (!lbl) lbl = act + "連結";\n' +
+'\n' +
+'  var btn = document.getElementById("btnSubmit");\n' +
+'  btn.disabled = true;\n' +
+'  btn.innerHTML = \'<span class="spin"></span> 處理中，請稍候...\';\n' +
+'  document.getElementById("previewLink").style.display = "none";\n' +
+'  setAlert("info", (currentMode === "gemini" ? "🤖 Gemini 正在分析 HTML 並找尋最佳插入位置..." : "⚡ 快速搜尋插入中...") + " 約需 10～30 秒");\n' +
+'\n' +
+'  var params = { date: date, activityName: act, url: url, label: lbl };\n' +
+'  var fn = currentMode === "gemini" ? google.script.run.withSuccessHandler(onResult).withFailureHandler(onError).addMissingButtonWithGemini\n' +
+'                                    : google.script.run.withSuccessHandler(onResult).withFailureHandler(onError).addMissingButtonSimple;\n' +
+'  fn(params);\n' +
+'}\n' +
+'\n' +
+'function onResult(res) {\n' +
+'  var btn = document.getElementById("btnSubmit");\n' +
+'  btn.disabled = false;\n' +
+'  btn.innerHTML = (currentMode === "gemini" ? "🤖 Gemini 智慧補按鈕" : "⚡ 快速補按鈕");\n' +
+'  if (res.ok) {\n' +
+'    setAlert("ok", res.msg);\n' +
+'    if (res.previewUrl) {\n' +
+'      var pl = document.getElementById("previewLink");\n' +
+'      pl.href = res.previewUrl;\n' +
+'      pl.style.display = "inline-flex";\n' +
+'    }\n' +
+'  } else {\n' +
+'    setAlert("err", "❌ " + res.msg);\n' +
+'  }\n' +
+'}\n' +
+'\n' +
+'function onError(err) {\n' +
+'  var btn = document.getElementById("btnSubmit");\n' +
+'  btn.disabled = false;\n' +
+'  btn.innerHTML = "🤖 Gemini 智慧補按鈕";\n' +
+'  setAlert("err", "❌ 系統錯誤：" + (err.message || err));\n' +
+'}\n' +
+'\n' +
+'// 載入週報列表\n' +
+'google.script.run.withSuccessHandler(function(list) {\n' +
+'  var sel = document.getElementById("selDate");\n' +
+'  sel.innerHTML = \'<option value="">— 請選擇週報期數 —</option>\';\n' +
+'  if (!list || list.length === 0) {\n' +
+'    sel.innerHTML += \'<option disabled>（無資料，請確認金鑰設定）</option>\';\n' +
+'    return;\n' +
+'  }\n' +
+'  list.forEach(function(item) {\n' +
+'    var opt = document.createElement("option");\n' +
+'    opt.value = item.date;\n' +
+'    opt.textContent = item.date + "　" + (item.title || "");\n' +
+'    sel.appendChild(opt);\n' +
+'  });\n' +
+'}).withFailureHandler(function(e) {\n' +
+'  document.getElementById("selDate").innerHTML = \'<option value="">（載入失敗：\' + e.message + "）</option>";\n' +
+'}).getPublishedBulletins();\n' +
+'</script>\n' +
+'</body>\n' +
+'</html>';
+}
 
 // ==========================================
 // 🗜️ 輕量純 JavaScript Deflate / Zlib 解壓縮引擎（免依賴 Apps Script Utilities.ungzip 的 Java CRC 限制）

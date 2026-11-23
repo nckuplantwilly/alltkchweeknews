@@ -9,6 +9,11 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <!-- 安全 Meta 標頭 -->
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="X-Frame-Options" content="SAMEORIGIN">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://generativelanguage.googleapis.com https://api.github.com https://raw.githubusercontent.com https://script.google.com; img-src 'self' data:; frame-ancestors 'none'">
 </head>
 <body>
   <div class="bg-gradient bg-gradient-1"></div>
@@ -130,25 +135,10 @@
     const GITHUB_USERNAME = 'wowidance-cloud';
     const INDEX_FILENAME = 'tkch-bulletin-index.json';
     const FONT_STORAGE_KEY = 'tkch-font-scale';
+    const GROQ_PROXY_URL = ''; // 建立 Cloudflare Worker 後填入 URL
 
-    // ==========================================================================
-    // 🔑 GROQ API KEY 智慧多組輪替池（自動負載分流 + 遇 429 毫秒級自動切換）
-    // 採用安全碼陣列，避免被 GitHub 公開掃描器撤銷金鑰
-    // ==========================================================================
-    function _dk(s) {
-      return s.split(',').map(function (c) { return String.fromCharCode(parseInt(c, 10) ^ 19); }).join('');
-    }
-    const GROQ_KEYS_POOL = [
-      _dk('116,96,120,76,65,32,81,113,100,113,124,113,66,114,68,116,123,43,75,73,73,87,107,99,68,84,119,106,113,32,85,74,123,107,106,93,36,122,36,119,38,105,97,123,127,39,124,39,67,39,103,95,43,68,89,91'),
-      _dk('116,96,120,76,37,32,39,122,85,118,38,86,122,105,97,80,107,122,118,69,84,80,86,120,68,84,119,106,113,32,85,74,123,85,123,126,85,33,90,112,66,75,64,101,88,116,122,121,95,127,66,35,89,113,99,84'),
-      _dk('116,96,120,76,116,42,37,69,68,80,119,107,116,123,69,89,89,94,67,34,37,32,98,33,68,84,119,106,113,32,85,74,71,105,66,114,82,71,107,82,74,71,102,112,84,85,100,70,100,113,102,113,116,101,124,126'),
-      _dk('116,96,120,76,71,75,70,117,106,87,106,101,123,97,71,86,100,102,81,33,99,81,37,106,68,84,119,106,113,32,85,74,34,91,87,118,123,124,99,70,74,90,75,102,93,70,113,70,122,67,66,88,71,36,67,92'),
-      _dk('116,96,120,76,71,86,34,126,122,38,102,88,106,36,70,71,91,43,80,85,32,37,68,99,68,84,119,106,113,32,85,74,68,105,107,96,94,35,116,70,42,74,87,32,93,32,88,67,96,69,68,124,84,120,35,80'),
-      _dk('116,96,120,76,122,92,91,116,89,87,35,67,127,70,117,66,97,118,32,120,107,90,32,102,68,84,119,106,113,32,85,74,67,94,85,69,88,116,43,64,82,65,98,37,123,112,122,126,87,70,93,80,38,81,118,123'),
-      _dk('116,96,120,76,114,98,64,42,33,68,97,38,117,80,100,94,73,73,94,100,114,124,107,43,68,84,119,106,113,32,85,74,95,94,88,64,84,124,66,120,105,114,88,71,99,123,117,124,86,119,89,64,71,94,32,107'),
-      _dk('116,96,120,76,36,106,86,85,120,43,64,117,66,37,119,97,88,120,123,36,35,89,94,100,68,84,119,106,113,32,85,74,94,69,114,122,95,119,39,81,95,91,36,96,107,66,70,119,117,39,39,102,93,101,88,112'),
-      _dk('116,96,120,76,39,122,114,90,112,118,126,125,84,95,69,93,105,116,117,98,95,95,121,88,68,84,119,106,113,32,85,74,127,126,42,119,67,80,73,118,67,127,35,123,120,107,98,91,39,116,127,98,70,34,121,66')
-    ];
+    // Groq Key 已移至 Cloudflare Worker（前端不持有任何 Key）
+    const GROQ_KEYS_POOL = [];
     let groqKeyPointer = 0;
 
     /* ==========================================================================
@@ -574,6 +564,8 @@
 
         // 若缺少讀經/大綱，或 prayerText 過短（舊快取截斷），向週報 HTML 即時補足
         const prayerTooShort = prayerText.length > 0 && prayerText.length < 800;
+        const sectionLinks = []; // 本期所有帶 href 的連結按鈕
+        const sectionTexts = {}; // 各 <details> 區塊純文字
         if ((!readingText || !sermonText || !prayerText || prayerTooShort) && b.url) {
           try {
             const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
@@ -607,6 +599,37 @@
                 }
               }
             }
+
+              // ★ 新增：抽取各 <details> 區塊的文字 + 連結，讓 AI 能直接引用內容與按鈕
+              const detailsBlocks = html.match(/<details[\s\S]*?<\/details>/gi) || [];
+              detailsBlocks.forEach(function(block) {
+                const sumMatch = block.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i);
+                const sectionTitle = sumMatch ? sumMatch[1].replace(/<[^>]+>/g, '').trim() : '其他';
+                const plainText = block
+                  .replace(/<style[\s\S]*?<\/style>/gi, '')
+                  .replace(/<script[\s\S]*?<\/script>/gi, '')
+                  .replace(/<[^>]+>/g, ' ')
+                  .replace(/\s+/g, ' ').trim().substring(0, 600);  // 每區塊最多 600 字，避免多期資料過長
+                sectionTexts[sectionTitle] = plainText;
+                const aRegex = /<a\s+[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+                let am;
+                while ((am = aRegex.exec(block)) !== null) {
+                  const href = am[1].trim();
+                  const label = am[2].replace(/<[^>]+>/g, '').trim();
+                  if (href && label) sectionLinks.push({ section: sectionTitle, label, url: href });
+                }
+              });
+              // 抽取 <details> 外的附加按鈕（如補上去的免費索票）
+              const outerHtml = html.replace(/<details[\s\S]*?<\/details>/gi, '');
+              const outerRe = /<a\s+[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+              let om;
+              while ((om = outerRe.exec(outerHtml)) !== null) {
+                const href = om[1].trim();
+                const label = om[2].replace(/<[^>]+>/g, '').trim();
+                if (href && label && !href.includes('htmlpreview') && !href.includes('github.com')) {
+                  sectionLinks.push({ section: '（附加按鈕）', label, url: href });
+                }
+              }
           } catch (e) {}
         }
 
@@ -615,91 +638,83 @@
         if (sermonText) parts.push('【本期講道大綱與經文】：' + sermonText);
         if (prayerText) parts.push('【本期代禱事項】：' + prayerText.substring(0, isLatest ? 2800 : 600));
         if (roasterText) parts.push('【本期事奉輪值】：' + roasterText.substring(0, isLatest ? 800 : 450));
+        // ★ 新增：各區塊完整文字
+        if (Object.keys(sectionTexts).length > 0) {
+          const sectParts = Object.entries(sectionTexts).map(([t, tx]) => '  ▸ ' + t + '：' + tx).join('\n');
+          parts.push('【本期各區塊完整內文】：\n' + sectParts);
+        }
+        // ★ 新增：活動連結按鈕清單（URL 去重：同一連結只保留最新一期）
+        if (sectionLinks.length > 0) {
+          const seenUrls = new Set();
+          const uniqueLinks = sectionLinks.filter(l => {
+            const key = l.url.split('?')[0]; // 忽略 query string 差異
+            if (seenUrls.has(key)) return false;
+            seenUrls.add(key);
+            return true;
+          });
+          const linkLines = uniqueLinks.map(l => '  • [' + l.label + '](' + l.url + ')（區塊：' + l.section + '）').join('\n');
+          parts.push('【本期所有活動連結按鈕】（已去重，共 ' + uniqueLinks.length + ' 個）：\n' + linkLines);
+        }
         if (parts.length > 0) detailedContextMap[b.date] = parts.join('\n  ');
       }));
 
-      // 步驟 1 (GitHub Pages 主力首選)：Groq 超高速引擎直連（每日 14,400 次免費額度，反應極速且穩定）
-      try {
-        const eventForms = {
-          '2026-10-04': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '慕道班報名表'],
-          '2026-10-11': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '2026德光教會「閱讀・以賽亞」講座', '2027年全年讀經靈修書籍代訂購'],
-          '2026-10-18': ['2026德光教會「閱讀・以賽亞」講座 (https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform)', '2027年全年讀經靈修書籍代訂購 (https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header)', '德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)'],
-          '2026-10-25': ['培育部「心靈成長工作坊」線上課程報名 (https://docs.google.com/forms/d/e/1FAIpQLSedD1BhCrBeok3wkca2OlYP0lxGHxVoohlZUVzpT43fXvu2xA/viewform)', '2026德光教會「閱讀・以賽亞」講座 (https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform)', '2027年全年讀經靈修書籍代訂購 (https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header)', '德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)'],
-          '2026-11-01': ['2027年全年讀經「遵守生命令」靈修書籍代訂購 (https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header)', '2026德光教會「閱讀・以賽亞」講座報名 (https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform)', '培育部「心靈成長工作坊」線上課程報名表 (https://docs.google.com/forms/d/e/1FAIpQLSedD1BhCrBeok3wkca2OlYP0lxGHxVoohlZUVzpT43fXvu2xA/viewform)', '小步走線上報名 (https://docs.google.com/forms/d/e/1FAIpQLSc0RclQMdd4rS4pIXpxx40nWqSVddkFADU2VP4GTg6_-MgwEQ/viewform)']
-        };
+      // 步驟 1 (GitHub Pages 主力首選)：透過 Cloudflare Worker 代理呼叫 Groq（Key 藏在 Worker 環境變數）
+      if (GROQ_PROXY_URL) {
+        try {
+          const eventForms = {
+            '2026-10-04': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '慕道班報名表'],
+            '2026-10-11': ['德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)', '2026德光教會「閱讀・以賽亞」講座', '2027年全年讀經靈修書籍代訂購'],
+            '2026-10-18': ['2026德光教會「閱讀・以賽亞」講座 (https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform)', '2027年全年讀經靈修書籍代訂購 (https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header)', '德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)'],
+            '2026-10-25': ['培育部「心靈成長工作坊」線上課程報名 (https://docs.google.com/forms/d/e/1FAIpQLSedD1BhCrBeok3wkca2OlYP0lxGHxVoohlZUVzpT43fXvu2xA/viewform)', '2026德光教會「閱讀・以賽亞」講座 (https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform)', '2027年全年讀經靈修書籍代訂購 (https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header)', '德光教會社青&兒主野外禮拜報名表 (https://forms.gle/cQdSLqTaKDy32J5b7)'],
+            '2026-11-01': ['2027年全年讀經「遵守生命令」靈修書籍代訂購 (https://docs.google.com/forms/d/e/1FAIpQLSeeA9OsHsJea5eDm4bW-uxTkD80bYfXc1u-SNjz9GyKwDu9JA/viewform?usp=header)', '2026德光教會「閱讀・以賽亞」講座報名 (https://docs.google.com/forms/d/e/1FAIpQLScTKbPgDybvtiup6yGJ5MwwS7I5Yhl5ERrsrSlNjWpbx3sWjw/viewform)', '培育部「心靈成長工作坊」線上課程報名表 (https://docs.google.com/forms/d/e/1FAIpQLSedD1BhCrBeok3wkca2OlYP0lxGHxVoohlZUVzpT43fXvu2xA/viewform)', '小步走線上報名 (https://docs.google.com/forms/d/e/1FAIpQLSc0RclQMdd4rS4pIXpxx40nWqSVddkFADU2VP4GTg6_-MgwEQ/viewform)']
+          };
 
-        const bulletinContext = targetBulletins.map(b => {
-          const extraEvents = eventForms[b.date] ? `，本週活動：${eventForms[b.date].join('、')}` : '';
-          const detailInfo = detailedContextMap[b.date] ? `\n  ${detailedContextMap[b.date]}` : '';
-          return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}${detailInfo}`;
-        }).join('\n\n');
+          const bulletinContext = targetBulletins.map(b => {
+            const extraEvents = eventForms[b.date] ? `，本週活動：${eventForms[b.date].join('、')}` : '';
+            const detailInfo = detailedContextMap[b.date] ? `
+  ${detailedContextMap[b.date]}` : '';
+            return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}${detailInfo}`;
+          }).join('
 
-        const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
+');
+
+          const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
 請依據下方提供的【歷期週報資料】來回答會友的詢問。
 回答守則（極度重要）：
 1. 嚴禁冗長寒暄與客套話！直接切入重點，提供約 150 字精準、清晰的回答。
 2. 語氣尊重大方，使用台灣繁體中文。
 3. 若會友詢問某人服事、代禱或活動，精確列出【日期/期數】、【項目】與【內容】，排版清晰。
-4. 必須在回覆末尾附上當期週報的 Markdown 超連結（例如：[點此閱讀第 42 期週報](網址)），方便長者點閱。
-5. 若資料中完全未提及相關內容，請直接誠懇告知「查無相關消息」，不要編造或贅述無關內容。
+4. 若查到相關資訊，請直接列出完整內容（時間、地點、說明），並將【本期所有活動連結按鈕】中對應的連結直接以 Markdown 格式嵌入在回答中（例如：[免費索票](網址)），不要叫會友另外去翻週報。
+5. 當相關活動只有 1~2 個：詳細說明（時間、地點、說明文字、連結）。
+   當相關活動有 3 個以上（例如多個聖誕活動）：改用緊湊條列，每項只列活動名稱、日期/時間、直接點擊連結，格式如：
+   • 聖誕音樂劇「No Room for Christmas」— 12/5（六）19:30 [免費索票](網址)
+   • 青少年聖誕野餐派對 — 12/25（五）[報名表單](網址)
+   同一個活動若在多期週報出現，只列出一次，不要重複。
+6. 只有在會友需要閱讀更多細節時，才在最後附上週報連結，格式如：[閱讀第 47 期完整週報](網址)。
+7. 若資料中完全未提及相關內容，請直接誠懇告知「查無相關消息」，不要編造或贅述無關內容。
 6. 排除所有奉獻金額與明細相關的詢問。
 
 【歷期週報資料】：
 ${bulletinContext}`;
 
-        // 智慧 Key 輪替池與故障自動轉移
-        const validGroqKeys = GROQ_KEYS_POOL.filter(k => k && typeof k === 'string' && k.trim().length > 15);
-        const keysToTry = validGroqKeys.length > 0 ? validGroqKeys : [
-          ['gsk_', 'R3BbwbobQaWgh8XZ', 'ZDxpWGdyb3FYhxyN', '7i7d5zrhl4o4P4tL8WJH'].join('')
-        ];
-
-        // 輪流負載分流（Round-Robin）
-        const startIndex = groqKeyPointer % keysToTry.length;
-        groqKeyPointer = (groqKeyPointer + 1) % keysToTry.length;
-
-        for (let attempt = 0; attempt < keysToTry.length; attempt++) {
-          const keyIdx = (startIndex + attempt) % keysToTry.length;
-          const currentKey = keysToTry[keyIdx];
-
-          try {
-            const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${currentKey}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                model: 'qwen/qwen3.8-27b',
-                messages: [
-                  { role: 'system', content: systemPrompt },
-                  { role: 'user', content: query }
-                ],
-                temperature: 0.2,
-                max_tokens: 750
-              })
-            });
-
-            if (groqRes.ok) {
-              const gData = await groqRes.json();
-              const ans = gData.choices?.[0]?.message?.content;
-              if (ans) {
-                updateModeLabel('cloud');
-                loadingMsg.innerHTML = formatBotAnswer(ans);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-                logToGoogleSheet(query, ans);
-                return; // 成功獲得回覆，正常結束
-              }
-            } else {
-              const errBody = await groqRes.text();
-              console.warn(`Groq Key [${keyIdx + 1}/${keysToTry.length}] 回傳 ${groqRes.status}，自動切換下一組 Key 重試...`, errBody);
-              // 若為 429 或其他錯誤，迴圈繼續嘗試下一把 Key
+          const proxyRes = await fetch(GROQ_PROXY_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: query, bulletins: targetBulletins, systemPrompt: systemPrompt })
+          });
+          if (proxyRes.ok) {
+            const { answer } = await proxyRes.json();
+            if (answer) {
+              updateModeLabel('cloud');
+              loadingMsg.innerHTML = formatBotAnswer(answer);
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+              logToGoogleSheet(query, answer);
+              return;
             }
-          } catch (callErr) {
-            console.warn(`Groq Key [${keyIdx + 1}] 連線異常，嘗試下一組：`, callErr);
           }
+        } catch (gErr) {
+          console.error('Worker proxy 呼叫失敗，啟用本地備援：', gErr);
         }
-      } catch (gErr) {
-        console.error('Groq 直連呼叫失敗，嘗試其他備援：', gErr);
       }
 
       // 步驟 1.5：若有自訂 localStorage Key 亦可使用
@@ -713,56 +728,25 @@ ${bulletinContext}`;
 
           const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」。請依資料提供約 150 字重點回答，嚴禁冗長寒暄，直接列出重點與 Markdown 連結：\n${customContext}`;
 
-          if (apiKey.startsWith('gsk_')) {
-            const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                model: 'qwen/qwen3.8-27b',
-                messages: [
-                  { role: 'system', content: systemPrompt },
-                  { role: 'user', content: query }
-                ],
-                temperature: 0.2,
-                max_tokens: 750
-              })
-            });
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n會友的問題：「${query}」` }] }],
+              generationConfig: { temperature: 0.3, maxOutputTokens: 1500 }
+            })
+          });
 
-            if (groqRes.ok) {
-              const gData = await groqRes.json();
-              const ans = gData.choices?.[0]?.message?.content;
-              if (ans) {
-                updateModeLabel('cloud');
-                loadingMsg.innerHTML = formatBotAnswer(ans);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-                logToGoogleSheet(query, ans);
-                return;
-              }
-            }
-          } else {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`;
-            const res = await fetch(url, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ role: 'user', parts: [{ text: `${systemPrompt}\n\n會友的問題：「${query}」` }] }],
-                generationConfig: { temperature: 0.3, maxOutputTokens: 1500 }
-              })
-            });
-
-            if (res.ok) {
-              const data = await res.json();
-              const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-              if (answer) {
-                updateModeLabel('cloud');
-                loadingMsg.innerHTML = formatBotAnswer(answer);
-                chatMessages.scrollTop = chatMessages.scrollHeight;
-                logToGoogleSheet(query, answer);
-                return;
-              }
+          if (res.ok) {
+            const data = await res.json();
+            const answer = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            if (answer) {
+              updateModeLabel('cloud');
+              loadingMsg.innerHTML = formatBotAnswer(answer);
+              chatMessages.scrollTop = chatMessages.scrollHeight;
+              logToGoogleSheet(query, answer);
+              return;
             }
           }
         } catch (err) {
