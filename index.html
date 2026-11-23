@@ -727,22 +727,29 @@ ${bulletinContext}`;
           const currentKey = keysToTry[keyIdx];
 
           try {
-            const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${currentKey}`,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                model: 'llama-3.1-8b-instant',
-                messages: [
-                  { role: 'system', content: systemPrompt },
-                  { role: 'user', content: query }
-                ],
-                temperature: 0.2,
-                max_tokens: 750
-              })
-            });
+            let groqRes = null;
+            const modelsToTry = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b'];
+            for (const mName of modelsToTry) {
+              try {
+                groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${currentKey}`,
+                    'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({
+                    model: mName,
+                    messages: [
+                      { role: 'system', content: systemPrompt },
+                      { role: 'user', content: query }
+                    ],
+                    temperature: 0.2,
+                    max_tokens: 750
+                  })
+                });
+                if (groqRes.ok) break;
+              } catch (mErr) {}
+            }
 
             if (groqRes.ok) {
               const gData = await groqRes.json();
