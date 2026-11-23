@@ -610,17 +610,13 @@
                 }
               }
 
-              // ★ 新增：抽取各 <details> 區塊的文字 + 連結，讓 AI 能直接引用內容與按鈕
+              // ★ 新增：抽取各 <details> 區塊文字與按鈕（自動過濾冗長程序表，降低 Token 消耗）
               const detailsBlocks = html.match(/<details[\s\S]*?<\/details>/gi) || [];
               detailsBlocks.forEach(function(block) {
                 const sumMatch = block.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i);
                 const sectionTitle = sumMatch ? sumMatch[1].replace(/<[^>]+>/g, '').trim() : '其他';
-                const plainText = block
-                  .replace(/<style[\s\S]*?<\/style>/gi, '')
-                  .replace(/<script[\s\S]*?<\/script>/gi, '')
-                  .replace(/<[^>]+>/g, ' ')
-                  .replace(/\s+/g, ' ').trim().substring(0, 600);  // 每區塊最多 600 字，避免多期資料過長
-                sectionTexts[sectionTitle] = plainText;
+                
+                // 連結照常全數抽取（確保索票、報名按鈕不會漏）
                 const aRegex = /<a\s+[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
                 let am;
                 while ((am = aRegex.exec(block)) !== null) {
@@ -628,6 +624,16 @@
                   const label = am[2].replace(/<[^>]+>/g, '').trim();
                   if (href && label) sectionLinks.push({ section: sectionTitle, label, url: href });
                 }
+
+                // 內文只抽取消息/代禱/講道（排除 40 行的程序表，節省 1,500+ 字）
+                if (sectionTitle.includes('程序') || sectionTitle.includes('歡迎卡')) return;
+
+                const plainText = block
+                  .replace(/<style[\s\S]*?<\/style>/gi, '')
+                  .replace(/<script[\s\S]*?<\/script>/gi, '')
+                  .replace(/<[^>]+>/g, ' ')
+                  .replace(/\s+/g, ' ').trim().substring(0, isLatest ? 400 : 250);
+                sectionTexts[sectionTitle] = plainText;
               });
               // 抽取 <details> 外的附加按鈕（如補上去的免費索票）
               const outerHtml = html.replace(/<details[\s\S]*?<\/details>/gi, '');
@@ -645,14 +651,15 @@
         }
 
         const parts = [];
-        if (readingText) parts.push('【本期全年讀經進度】：' + readingText);
-        if (sermonText) parts.push('【本期講道大綱與經文】：' + sermonText);
-        if (prayerText) parts.push('【本期代禱事項】：' + prayerText.substring(0, isLatest ? 2800 : 600));
-        if (roasterText) parts.push('【本期事奉輪值】：' + roasterText.substring(0, isLatest ? 800 : 450));
-        // ★ 新增：各區塊完整文字
+        if (readingText) parts.push('【本期讀經】：' + readingText);
+        if (sermonText) parts.push('【本期講道】：' + sermonText);
+        if (roasterText) parts.push('【本期事奉輪值】：' + roasterText.substring(0, isLatest ? 400 : 200));
+        // 若有區塊內文，以區塊內文為主（消除與 prayerText 的重複）
         if (Object.keys(sectionTexts).length > 0) {
           const sectParts = Object.entries(sectionTexts).map(([t, tx]) => '  ▸ ' + t + '：' + tx).join('\n');
-          parts.push('【本期各區塊完整內文】：\n' + sectParts);
+          parts.push('【本期精華內文】：\n' + sectParts);
+        } else if (prayerText) {
+          parts.push('【本期代禱與消息】：' + prayerText.substring(0, isLatest ? 600 : 300));
         }
         // ★ 新增：活動連結按鈕清單（URL 去重：同一連結只保留最新一期）
         if (sectionLinks.length > 0) {
@@ -727,7 +734,7 @@ ${bulletinContext}`;
                 'Content-Type': 'application/json'
               },
               body: JSON.stringify({
-                model: 'qwen/qwen3.8-27b',
+                model: 'llama-3.1-8b-instant',
                 messages: [
                   { role: 'system', content: systemPrompt },
                   { role: 'user', content: query }
