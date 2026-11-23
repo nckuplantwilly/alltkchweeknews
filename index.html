@@ -598,7 +598,6 @@
                   if (tbIdx !== -1) roasterText = clean.substring(Math.max(0, tbIdx - 100), tbIdx + (isLatest ? 700 : 350)).trim();
                 }
               }
-            }
 
               // ★ 新增：抽取各 <details> 區塊的文字 + 連結，讓 AI 能直接引用內容與按鈕
               const detailsBlocks = html.match(/<details[\s\S]*?<\/details>/gi) || [];
@@ -630,6 +629,7 @@
                   sectionLinks.push({ section: '（附加按鈕）', label, url: href });
                 }
               }
+            }
           } catch (e) {}
         }
 
