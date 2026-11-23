@@ -573,11 +573,11 @@
         let prayerText = b.prayerText || '';
         let roasterText = b.roasterText || '';
 
-        // 若缺少讀經/大綱，或 prayerText 過短（舊快取截斷），向週報 HTML 即時補足
-        const prayerTooShort = prayerText.length > 0 && prayerText.length < 800;
-        const sectionLinks = []; // 本期所有帶 href 的連結按鈕
-        const sectionTexts = {}; // 各 <details> 區塊純文字
-        if ((!readingText || !sermonText || !prayerText || prayerTooShort) && b.url) {
+        // 目標搜尋週報：一律解析完整 HTML 抽取各區塊真實文字與活動按鈕
+        let sectionLinks = b._cachedSectionLinks ? [...b._cachedSectionLinks] : [];
+        let sectionTexts = b._cachedSectionTexts ? Object.assign({}, b._cachedSectionTexts) : {};
+
+        if (b.url && Object.keys(sectionTexts).length === 0) {
           try {
             const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
             const resp = await fetch(rawUrl, { cache: 'no-store' });
@@ -593,49 +593,34 @@
                   sermonText = smMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, isLatest ? 300 : 180);
                 }
               }
-              // prayerText 空白或舊快取過短（< 800 字），一律從 HTML 重新抓
 
-              if (!prayerText || prayerTooShort) {
-                const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-                const pIdx = clean.indexOf('教會消息') !== -1 ? clean.indexOf('教會消息') : (clean.indexOf('代禱事項') !== -1 ? clean.indexOf('代禱事項') : clean.indexOf('禱告園地'));
-                if (pIdx !== -1) prayerText = clean.substring(pIdx, pIdx + (isLatest ? 2800 : 600)).trim();
-              }
-              if (!roasterText) {
-                const clean = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-                const rIdx = clean.indexOf('事奉輪值表');
-                if (rIdx !== -1) roasterText = clean.substring(rIdx, rIdx + (isLatest ? 800 : 450)).trim();
-                else {
-                  const tbIdx = clean.indexOf('值週');
-                  if (tbIdx !== -1) roasterText = clean.substring(Math.max(0, tbIdx - 100), tbIdx + (isLatest ? 700 : 350)).trim();
-                }
-              }
-
-              // ★ 新增：抽取各 <details> 區塊文字與按鈕（自動過濾冗長程序表，降低 Token 消耗）
+              // 抽取各 <details> 區塊文字與按鈕
               const detailsBlocks = html.match(/<details[\s\S]*?<\/details>/gi) || [];
               detailsBlocks.forEach(function(block) {
                 const sumMatch = block.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i);
                 const sectionTitle = sumMatch ? sumMatch[1].replace(/<[^>]+>/g, '').trim() : '其他';
                 
-                // 連結照常全數抽取（確保索票、報名按鈕不會漏）
+                // 連結全數抽取（確保索票、報名按鈕不會漏）
                 const aRegex = /<a\s+[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
                 let am;
                 while ((am = aRegex.exec(block)) !== null) {
                   const href = am[1].trim();
                   const label = am[2].replace(/<[^>]+>/g, '').trim();
-                  if (href && label) sectionLinks.push({ section: sectionTitle, label, url: href });
+                  if (href && label) sectionLinks.push({ section: sectionTitle, label: label, url: href });
                 }
 
-                // 內文只抽取消息/代禱/講道（排除 40 行的程序表，節省 1,500+ 字）
+                // 排除 40 行的禮拜程序表，避免無效佔用 Token
                 if (sectionTitle.includes('程序') || sectionTitle.includes('歡迎卡')) return;
 
                 const plainText = block
                   .replace(/<style[\s\S]*?<\/style>/gi, '')
                   .replace(/<script[\s\S]*?<\/script>/gi, '')
                   .replace(/<[^>]+>/g, ' ')
-                  .replace(/\s+/g, ' ').trim().substring(0, isLatest ? 400 : 250);
+                  .replace(/\s+/g, ' ').trim().substring(0, isLatest ? 600 : 350);
                 sectionTexts[sectionTitle] = plainText;
               });
-              // 抽取 <details> 外的附加按鈕（如補上去的免費索票）
+
+              // 抽取 <details> 外的附加按鈕（如補上去的免費索票等獨立按鈕）
               const outerHtml = html.replace(/<details[\s\S]*?<\/details>/gi, '');
               const outerRe = /<a\s+[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
               let om;
@@ -643,9 +628,12 @@
                 const href = om[1].trim();
                 const label = om[2].replace(/<[^>]+>/g, '').trim();
                 if (href && label && !href.includes('htmlpreview') && !href.includes('github.com')) {
-                  sectionLinks.push({ section: '（附加按鈕）', label, url: href });
+                  sectionLinks.push({ section: '（附加按鈕）', label: label, url: href });
                 }
               }
+
+              b._cachedSectionTexts = sectionTexts;
+              b._cachedSectionLinks = sectionLinks;
             }
           } catch (e) {}
         }
