@@ -85,8 +85,8 @@
           <label for="ai-search-range" class="ai-range-label">🔍 搜尋範圍：</label>
           <select id="ai-search-range" class="ai-range-select" aria-label="選擇搜尋週報期數範圍">
             <option value="2" selected>近 2 期（最快、最精準）</option>
-            <option value="5">近 5 期</option>
-            <option value="all">全部期數</option>
+            <option value="5">近 5 期（約一個月）</option>
+            <option value="all">近 8 期（分批查詢，上限推薦）</option>
           </select>
         </div>
         <span class="ai-tag-tip">常見搜尋：</span>
@@ -550,7 +550,7 @@
       appendMessage('user', escapeHTML(query));
       const loadingMsg = appendMessage('bot', '<span class="ai-typing">小幫手正在查閱週報資料中... 🕊️</span>');
 
-      // 依使用者選取的範圍決定搜尋期數（預設近 2 期，或 5 期、全部）
+      // 依使用者選取的範圍決定搜尋期數（上限 8 期，分批保證絕不超過 Token 限制）
       const rangeVal = document.getElementById('ai-search-range')?.value || '2';
       let targetBulletins = [];
       if (rangeVal === '2') {
@@ -558,109 +558,82 @@
       } else if (rangeVal === '5') {
         targetBulletins = cachedBulletins.slice(0, 5);
       } else {
-        targetBulletins = cachedBulletins.slice(0, 10); // 全部最多 10 期以維護速度
+        targetBulletins = cachedBulletins.slice(0, 8); // 分批查詢，單次最多 8 期
       }
 
-      // 方案 B：讀取 JSON Index 快取（讀經進度 / 講道大綱 / 代禱事項 / 事奉輪值）
-      // 若 JSON 索引尚未收錄讀經進度或大綱，啟動即時輕量補抓
+      // 方案：分層深度架構（最新期 100% 完整純文字絕不截斷，歷史期數焦點摘要）
       const detailedContextMap = {};
       await Promise.all(targetBulletins.map(async (b, idx) => {
         if (!b) return;
         const isLatest = idx === 0;
 
-        let readingText = b.readingText || '';
-        let sermonText = b.sermonText || '';
-        let prayerText = b.prayerText || '';
-        let roasterText = b.roasterText || '';
+        let links = b._cachedLinks ? [...b._cachedLinks] : [];
+        let fullCleanText = b._cachedCleanText || '';
 
-        // 目標搜尋週報：一律解析完整 HTML 抽取各區塊真實文字與活動按鈕
-        let sectionLinks = b._cachedSectionLinks ? [...b._cachedSectionLinks] : [];
-        let sectionTexts = b._cachedSectionTexts ? Object.assign({}, b._cachedSectionTexts) : {};
-
-        if (b.url && Object.keys(sectionTexts).length === 0) {
+        if (b.url && (!fullCleanText || links.length === 0)) {
           try {
             const rawUrl = b.url.replace('https://htmlpreview.github.io/?', '');
             const resp = await fetch(rawUrl, { cache: 'no-store' });
             if (resp.ok) {
               const html = await resp.text();
-              if (!readingText) {
-                const rdMatch = html.match(/全年讀經進度[：:]\s*(?:<\/strong>)?\s*([^<\n]+)/i);
-                if (rdMatch) readingText = rdMatch[1].trim();
-              }
-              if (!sermonText) {
-                const smMatch = html.match(/<(?:h[2-4]|summary|p)[^>]*>.*?(?:主日講道大綱|講道大綱|主日講道筆記).*?<\/(?:h[2-4]|summary|p)>([\s\S]{20,800}?)(?:<details|<h[2-3]|<!--|\n\n|$)/i);
-                if (smMatch) {
-                  sermonText = smMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, isLatest ? 300 : 180);
-                }
-              }
 
-              // 抽取各 <details> 區塊文字與按鈕
-              const detailsBlocks = html.match(/<details[\s\S]*?<\/details>/gi) || [];
-              detailsBlocks.forEach(function(block) {
-                const sumMatch = block.match(/<summary[^>]*>([\s\S]*?)<\/summary>/i);
-                const sectionTitle = sumMatch ? sumMatch[1].replace(/<[^>]+>/g, '').trim() : '其他';
-                
-                // 連結全數抽取（確保索票、報名按鈕不會漏）
-                const aRegex = /<a\s+[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
-                let am;
-                while ((am = aRegex.exec(block)) !== null) {
-                  const href = am[1].trim();
-                  const label = am[2].replace(/<[^>]+>/g, '').trim();
-                  if (href && label) sectionLinks.push({ section: sectionTitle, label: label, url: href });
-                }
-
-                // 排除 40 行的禮拜程序表，避免無效佔用 Token
-                if (sectionTitle.includes('程序') || sectionTitle.includes('歡迎卡')) return;
-
-                const plainText = block
-                  .replace(/<style[\s\S]*?<\/style>/gi, '')
-                  .replace(/<script[\s\S]*?<\/script>/gi, '')
-                  .replace(/<[^>]+>/g, ' ')
-                  .replace(/\s+/g, ' ').trim().substring(0, isLatest ? 600 : 350);
-                sectionTexts[sectionTitle] = plainText;
-              });
-
-              // 抽取 <details> 外的附加按鈕（如補上去的免費索票等獨立按鈕）
-              const outerHtml = html.replace(/<details[\s\S]*?<\/details>/gi, '');
-              const outerRe = /<a\s+[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
-              let om;
-              while ((om = outerRe.exec(outerHtml)) !== null) {
-                const href = om[1].trim();
-                const label = om[2].replace(/<[^>]+>/g, '').trim();
+              // 1. 抽取整篇所有活動按鈕（不依賴標籤是否閉合，確保索票與報名按鈕 100% 抓齊）
+              const seen = new Set();
+              const aRegex = /<a\s+[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
+              let am;
+              while ((am = aRegex.exec(html)) !== null) {
+                const href = am[1].trim();
+                const label = am[2].replace(/<[^>]+>/g, '').trim();
                 if (href && label && !href.includes('htmlpreview') && !href.includes('github.com')) {
-                  sectionLinks.push({ section: '（附加按鈕）', label: label, url: href });
+                  const key = href.split('?')[0];
+                  if (!seen.has(key)) {
+                    seen.add(key);
+                    links.push({ label: label, url: href });
+                  }
                 }
               }
 
-              b._cachedSectionTexts = sectionTexts;
-              b._cachedSectionLinks = sectionLinks;
+              // 2. 整篇純文字抽取（去除 style / script / 標籤，不使用容易出錯的正則分段）
+              let clean = html
+                .replace(/<style[\s\S]*?<\/style>/gi, '')
+                .replace(/<script[\s\S]*?<\/script>/gi, '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ').trim();
+
+              // 排除冗長禮拜程序表（序樂、宣召等，節省 Token）
+              clean = clean.replace(/主日禮拜程序[\s\S]*?主日講道筆記/i, '主日講道筆記');
+
+              fullCleanText = clean;
+              b._cachedCleanText = fullCleanText;
+              b._cachedLinks = links;
             }
           } catch (e) {}
         }
 
         const parts = [];
-        if (readingText) parts.push('【本期讀經】：' + readingText);
-        if (sermonText) parts.push('【本期講道】：' + sermonText);
-        if (roasterText) parts.push('【本期事奉輪值】：' + roasterText.substring(0, isLatest ? 400 : 200));
-        // 若有區塊內文，以區塊內文為主（消除與 prayerText 的重複）
-        if (Object.keys(sectionTexts).length > 0) {
-          const sectParts = Object.entries(sectionTexts).map(([t, tx]) => '  ▸ ' + t + '：' + tx).join('\n');
-          parts.push('【本期精華內文】：\n' + sectParts);
-        } else if (prayerText) {
-          parts.push('【本期代禱與消息】：' + prayerText.substring(0, isLatest ? 600 : 300));
+        if (isLatest) {
+          // ★ 最新當週週報：整篇完整內文一字不漏傳給 AI，時間、地點、活動全都在！
+          if (fullCleanText) {
+            parts.push('【本期完整公告與內文】：\n' + fullCleanText);
+          } else {
+            if (b.readingText) parts.push('【讀經】：' + b.readingText);
+            if (b.sermonText) parts.push('【講道】：' + b.sermonText);
+            if (b.prayerText) parts.push('【消息與代禱】：' + b.prayerText);
+          }
+        } else {
+          // ★ 歷史過往週報：保留講道經文與大綱，內文保留精華
+          if (b.readingText) parts.push('【讀經】：' + b.readingText);
+          if (b.sermonText) parts.push('【講道】：' + b.sermonText);
+          if (b.prayerText) parts.push('【焦點消息】：' + b.prayerText.substring(0, 300));
+          else if (fullCleanText) parts.push('【焦點消息】：' + fullCleanText.substring(0, 350));
         }
-        // ★ 新增：活動連結按鈕清單（URL 去重：同一連結只保留最新一期）
-        if (sectionLinks.length > 0) {
-          const seenUrls = new Set();
-          const uniqueLinks = sectionLinks.filter(l => {
-            const key = l.url.split('?')[0]; // 忽略 query string 差異
-            if (seenUrls.has(key)) return false;
-            seenUrls.add(key);
-            return true;
-          });
-          const linkLines = uniqueLinks.map(l => '  • [' + l.label + '](' + l.url + ')（區塊：' + l.section + '）').join('\n');
-          parts.push('【本期所有活動連結按鈕】（已去重，共 ' + uniqueLinks.length + ' 個）：\n' + linkLines);
+
+        // 活動按鈕清單（直接提供給 AI 嵌入）
+        if (links.length > 0) {
+          const linkLines = links.map(l => '  • [' + l.label + '](' + l.url + ')').join('\n');
+          parts.push('【本期所有活動連結按鈕】：\n' + linkLines);
         }
+
         if (parts.length > 0) detailedContextMap[b.date] = parts.join('\n  ');
       }));
 
@@ -684,18 +657,15 @@
           const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
 請依據下方提供的【歷期週報資料】來回答會友的詢問。
 回答守則（極度重要）：
-1. 嚴禁冗長寒暄與客套話！直接切入重點，提供約 150 字精準、清晰的回答。
+1. 嚴禁冗長客套！直接切入重點回答，排版清晰條理分明。
 2. 語氣尊重大方，使用台灣繁體中文。
-3. 若會友詢問某人服事、代禱或活動，精確列出【日期/期數】、【項目】與【內容】，排版清晰。
-4. 若查到相關資訊，請直接列出完整內容（時間、地點、說明），並將【本期所有活動連結按鈕】中對應的連結直接以 Markdown 格式嵌入在回答中（例如：[免費索票](網址)），不要叫會友另外去翻週報。
-5. 當相關活動只有 1~2 個：詳細說明（時間、地點、說明文字、連結）。
-   當相關活動有 3 個以上（例如多個聖誕活動）：改用緊湊條列，每項只列活動名稱、日期/時間、直接點擊連結，格式如：
-   • 聖誕音樂劇「No Room for Christmas」— 12/5（六）19:30 [免費索票](網址)
-   • 青少年聖誕野餐派對 — 12/25（五）[報名表單](網址)
-   同一個活動若在多期週報出現，只列出一次，不要重複。
-6. 只有在會友需要閱讀更多細節時，才在最後附上週報連結，格式如：[閱讀第 47 期完整週報](網址)。
-7. 若資料中完全未提及相關內容，請直接誠懇告知「查無相關消息」，不要編造或贅述無關內容。
-6. 排除所有奉獻金額與明細相關的詢問。
+3. 若資料中有提及活動（例如：聖誕音樂劇、野餐派對、洗禮等），請務必完整列出【活動名稱】、【時間日期】、【地點】與【說明】。
+4. 當資料中有對應的活動報名或索票連結時，必須直接以 Markdown 格式嵌入在回答中（例如：[免費索票](網址) 或 [報名表單](網址)），方便會友直接點擊！切勿回答「查無詳細資訊」。
+5. 若相關活動只有 1~2 個：詳細列出時間、地點、說明與點擊按鈕。
+   若相關活動有 3 個以上：採用緊湊條列排版，同活動不重複出現。
+6. 若需閱讀更多細節，可在結尾附上週報連結，如：[閱讀第 47 期週報](網址)。
+7. 若資料中完全未提及相關內容，請直接誠懇告知「查無相關消息」。
+8. 排除所有奉獻金額與明細相關的詢問。
 
 【歷期週報資料】：
 ${bulletinContext}`;
