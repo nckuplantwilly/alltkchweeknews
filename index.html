@@ -674,9 +674,7 @@
             const detailInfo = detailedContextMap[b.date] ? `
   ${detailedContextMap[b.date]}` : '';
             return `【期數 ${b.volume} 卷 ${b.issue} 期】日期：${b.date}，標題：${b.title}，摘要：${b.summary || '（無特定摘要）'}${extraEvents}，閱讀網址：${b.url}${detailInfo}`;
-          }).join('
-
-');
+          }).join('\n\n');
 
           const systemPrompt = `你是一位熱心、精確的「德光長老教會週報 AI 小幫手」，主要服務視力退化或需要查找教會資訊的長者與會友。
 請依據下方提供的【歷期週報資料】來回答會友的詢問。
